@@ -1,0 +1,14 @@
+[03:57:36] INFO : Searching for Android devices...
+[03:57:36] INFO : ✓ Connected to R3CY40ZJD4P
+[03:57:36] INFO : Reading phone information...
+[03:57:36] INFO : ✓ SM-S938W
+[03:57:36] INFO : ✓ Android 16
+[03:57:36] INFO : ✓ 1440 x 3120
+[03:57:36] INFO : ✓ Density 600
+[03:57:36] INFO : Taking screenshot...
+[03:57:37] INFO : ✓ Screenshot saved.
+[03:57:37] INFO : ✓ Screenshot loaded.
+[03:57:37] INFO : Image Size : 1440 x 3120
+[03:57:37] WARNING : Letter circle not found.
+[03:57:37] INFO : ✓ Foundation test completed.
+[03:57:37] INFO : Screenshot saved to: C:\WordMadnessBot\screenshots\latest.png

@@ -1,0 +1,12 @@
+[03:56:52] INFO : Searching for Android devices...
+[03:56:52] INFO : ✓ Connected to R3CY40ZJD4P
+[03:56:52] INFO : Reading phone information...
+[03:56:53] INFO : ✓ SM-S938W
+[03:56:53] INFO : ✓ Android 16
+[03:56:53] INFO : ✓ 1440 x 3120
+[03:56:53] INFO : ✓ Density 600
+[03:56:53] INFO : Taking screenshot...
+[03:56:54] INFO : ✓ Screenshot saved.
+[03:56:54] INFO : ✓ Screenshot loaded.
+[03:56:54] INFO : Image Size : 1440 x 3120
+[03:56:54] ERROR : name 'LetterDetector' is not defined

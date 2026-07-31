@@ -1,0 +1,11 @@
+opencv-python
+numpy
+Pillow
+pytesseract
+requests
+beautifulsoup4
+lxml
+adbutils
+rapidfuzz
+colorama
+rich
