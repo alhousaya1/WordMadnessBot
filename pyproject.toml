@@ -59,5 +59,6 @@ disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
+markers = ["hardware: opt-in tests requiring a connected Android device"]
 testpaths = ["tests"]
 pythonpath = ["src"]
