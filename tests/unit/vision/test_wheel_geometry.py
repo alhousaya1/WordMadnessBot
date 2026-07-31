@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -22,17 +23,27 @@ def _capture(image: Image.Image) -> ScreenCapture:
     return ScreenCapture(output.getvalue(), ScreenSize(*image.size))
 
 
-def _synthetic_wheel() -> ScreenCapture:
-    image = Image.new("RGB", (800, 1200), (40, 40, 40))
+def _synthetic_wheel(letter_count: int = 5, width: int = 800) -> ScreenCapture:
+    height = round(width * 1.5)
+    image = Image.new("RGB", (width, height), (40, 40, 40))
     draw = ImageDraw.Draw(image)
-    center = (400, 850)
-    radius = 250
+    center = (width // 2, round(height * 0.7083))
+    radius = round(width * 0.3125)
     draw.ellipse(
         (center[0] - radius, center[1] - radius, center[0] + radius, center[1] + radius),
         fill=(235, 235, 235),
     )
-    for x, y in ((400, 690), (550, 800), (495, 990), (305, 990), (250, 800)):
-        draw.rectangle((x - 22, y - 35, x + 22, y + 35), fill=(15, 15, 15))
+    for index in range(letter_count):
+        angle = -math.pi / 2 + index * 2 * math.pi / letter_count
+        radial_distance = radius * 0.66
+        x = round(center[0] + radial_distance * math.cos(angle))
+        y = round(center[1] + radial_distance * math.sin(angle))
+        half_width = max(2, round(radius * (0.016 if index == 1 else 0.088)))
+        half_height = max(8, round(radius * 0.14))
+        draw.rectangle(
+            (x - half_width, y - half_height, x + half_width, y + half_height),
+            fill=(15, 15, 15),
+        )
     return _capture(image)
 
 
@@ -49,6 +60,22 @@ def test_detects_wheel_and_indexes_positions_clockwise_from_top() -> None:
     assert points[2].x > geometry.center.x
     assert points[3].x < geometry.center.x
     assert points[4].x < geometry.center.x
+
+
+@pytest.mark.parametrize("letter_count", [5, 6, 7])
+def test_detects_all_positions_without_duplicates(letter_count: int) -> None:
+    geometry = LetterWheelDetector().detect(_synthetic_wheel(letter_count))
+    assert len(geometry.letters) == letter_count
+    assert [position.index for position in geometry.letters] == list(range(letter_count))
+    assert len({position.point for position in geometry.letters}) == letter_count
+
+
+@pytest.mark.parametrize("width", [480, 800, 1200])
+def test_detection_scales_with_screen_resolution(width: int) -> None:
+    geometry = LetterWheelDetector().detect(_synthetic_wheel(6, width))
+    assert len(geometry.letters) == 6
+    assert abs(geometry.center.x - width // 2) <= max(3, round(width * 0.005))
+    assert abs(geometry.radius - round(width * 0.3125)) <= max(3, round(width * 0.005))
 
 
 def test_real_level_fixture_detects_five_letter_positions() -> None:

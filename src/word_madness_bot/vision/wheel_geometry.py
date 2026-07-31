@@ -200,18 +200,18 @@ def _detect_letter_positions(
         distance = math.hypot(point.x - center.x, point.y - center.y)
         aspect_ratio = width / height if height else 0.0
         if (
-            radius * radius * 0.002 <= area <= radius * radius * 0.15
-            and radius * 0.04 <= width <= radius * 0.4
-            and radius * 0.06 <= height <= radius * 0.4
-            and 0.25 <= aspect_ratio <= 2.0
-            and radius * 0.25 <= distance <= radius * 0.9
+            radius * radius * 0.00025 <= area <= radius * radius * 0.15
+            and radius * 0.008 <= width <= radius * 0.4
+            and radius * 0.035 <= height <= radius * 0.4
+            and 0.04 <= aspect_ratio <= 2.0
+            and radius * 0.2 <= distance <= radius * 0.9
         ):
             candidates.append((area, point))
 
     selected: list[tuple[float, PixelPoint]] = []
     for area, point in sorted(candidates, reverse=True, key=lambda item: item[0]):
         if all(
-            math.hypot(point.x - existing.x, point.y - existing.y) >= radius * 0.18
+            math.hypot(point.x - existing.x, point.y - existing.y) >= radius * 0.16
             for _, existing in selected
         ):
             selected.append((area, point))
