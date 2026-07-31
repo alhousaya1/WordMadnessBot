@@ -1,356 +1,135 @@
-# Software Requirements Specification
-
-## Document Control
-
-| Field | Value |
-|-------|-------|
-| Project | Word Madness Bot |
-| Target Application | Word Madness (ZenWord) — Android |
-| Document Version | 0.1 |
-| Status | Draft |
-| Last Updated | — |
-
-### Related Documents
-
-| Document | Description |
-|----------|-------------|
-| [Architecture.md](Architecture.md) | System design and component structure |
-| [Vision.md](Vision.md) | Screen capture, detection, and OCR requirements |
-| [Gameplay.md](Gameplay.md) | Game state, level flow, and input automation |
-| [Ads.md](Ads.md) | Advertisement and popup handling |
-| [Database.md](Database.md) | Dictionary and word list requirements |
-
-### Revision History
-
-| Version | Date | Author | Changes |
-|---------|------|--------|---------|
-| 0.1 | — | — | Initial documentation structure |
-
+# Software Requirements Specification (SRS)
+## 1. Purpose
+The purpose of this project is to develop a professional, modular, and maintainable Python automation bot for the Android game **Word Madness (ZenWord)**.
+The bot must automatically solve game levels by interacting with a real Android device using Android Debug Bridge (ADB).
+The project must be designed for long-term maintainability, scalability, and reliability.
+This document serves as the primary source of truth for the project.
+Any implementation that conflicts with this document must be considered incorrect.
 ---
-
-## 1. Introduction
-
-### 1.1 Purpose
-
-<!-- Describe the purpose of this document and its intended audience. -->
-
-### 1.2 Product Overview
-
-<!-- Brief summary of the Word Madness Bot: what it does, how it interacts with the game. -->
-
-### 1.3 Document Conventions
-
-#### Requirement Identifiers
-
-| Prefix | Category |
-|--------|----------|
-| `FR-xxx` | Functional requirement |
-| `NFR-xxx` | Non-functional requirement |
-| `CON-xxx` | Constraint |
-| `ASM-xxx` | Assumption |
-
-#### Requirement Status Values
-
-| Status | Meaning |
-|--------|---------|
-| Proposed | Identified, not yet reviewed |
-| Approved | Accepted for implementation |
-| Implemented | Built and verified |
-| Deferred | Out of scope for current milestone |
-
-#### Priority Levels
-
-| Priority | Meaning |
-|----------|---------|
-| Must | Required for minimum viable product |
-| Should | Important but not blocking |
-| Could | Desirable enhancement |
-| Won't | Explicitly excluded from current scope |
-
+## 2. Project Goals
+The bot shall:
+- Detect a connected Android device automatically.
+- Determine the connected device's screen resolution.
+- Automatically adapt to different Android screen sizes.
+- Detect the current game state.
+- Read the current level number.
+- Load known solutions from a local JSON database.
+- Detect the letter wheel.
+- Generate swipe paths.
+- Swipe every valid word.
+- Detect advertisements.
+- Close advertisements automatically.
+- Continue solving levels indefinitely.
 ---
-
-## 2. Scope
-
-### 2.1 In Scope
-
-<!-- List capabilities the bot will provide. -->
-
-### 2.2 Out of Scope
-
-<!-- List capabilities explicitly excluded. -->
-
-### 2.3 Target Environment
-
-<!-- Hardware, OS, game version, connection method. -->
-
+## 3. Design Philosophy
+This project follows the following principles.
+### Principle 1
+The project must be modular.
+Every component has exactly one responsibility.
+No module should perform unrelated work.
 ---
-
-## 3. Definitions and Acronyms
-
-### 3.1 Definitions
-
-| Term | Definition |
-|------|------------|
-| Letter wheel | Circular arrangement of draggable letters on the puzzle screen |
-| Level | A single puzzle instance requiring one or more words to complete |
-| Bonus word | Valid dictionary word not required to finish the level |
-| Template | Reference image used for UI element matching |
-| — | — |
-
-### 3.2 Acronyms
-
-| Acronym | Expansion |
-|---------|-----------|
-| ADB | Android Debug Bridge |
-| OCR | Optical Character Recognition |
-| SRS | Software Requirements Specification |
-| — | — |
-
+### Principle 2
+The project must be data-driven.
+Game knowledge comes from:
+levels.json
+not from hardcoded words inside Python.
 ---
-
-## 4. Overall Description
-
-### 4.1 Product Perspective
-
-<!-- How the bot fits into the user's workflow. Standalone desktop tool controlling an Android device. -->
-
-### 4.2 Product Functions
-
-<!-- High-level capability summary. -->
-
-| ID | Function | Reference |
-|----|----------|-----------|
-| — | — | — |
-
-### 4.3 User Classes and Characteristics
-
-<!-- Primary operator profile, technical expectations. -->
-
-### 4.4 Operating Environment
-
-<!-- Windows host, Python runtime, ADB, connected Android device, Tesseract. -->
-
-### 4.5 Design and Implementation Constraints
-
-<!-- See Section 7. Cross-reference CON-xxx items. -->
-
-### 4.6 External Interfaces
-
-#### 4.6.1 Hardware Interfaces
-
-<!-- Android device via USB/Wi-Fi ADB. -->
-
-#### 4.6.2 Software Interfaces
-
-<!-- ADB, Tesseract, OpenCV, game application. -->
-
-#### 4.6.3 Communication Interfaces
-
-<!-- None expected beyond local ADB. -->
-
+### Principle 3
+Every component must be replaceable.
+Examples:
+ADB implementation
+↓
+ADBUtils
+↓
+Scrcpy
+↓
+USB HID
+without changing gameplay logic.
+Likewise
+OCR
+↓
+EasyOCR
+↓
+Template Matching
+must be replaceable.
 ---
-
-## 5. Functional Requirements
-
-### 5.1 Device Connection and Control
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| FR-001 | — | — | Proposed |
-| FR-002 | — | — | Proposed |
-
-<!-- ADB connect, device info, screenshot, tap, swipe. See Architecture.md → ADB layer. -->
-
-### 5.2 Vision and Perception
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| FR-010 | — | — | Proposed |
-| FR-011 | — | — | Proposed |
-
-<!-- Circle detection, letter extraction, screen classification. See Vision.md. -->
-
-### 5.3 Word Solving
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| FR-020 | — | — | Proposed |
-| FR-021 | — | — | Proposed |
-
-<!-- Dictionary lookup, valid word generation. See Database.md, Gameplay.md. -->
-
-### 5.4 Input Automation
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| FR-030 | — | — | Proposed |
-| FR-031 | — | — | Proposed |
-
-<!-- Swipe path calculation, word submission, timing. See Gameplay.md. -->
-
-### 5.5 Game Flow and State Management
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| FR-040 | — | — | Proposed |
-| FR-041 | — | — | Proposed |
-
-<!-- State machine, level navigation, completion detection. See Gameplay.md. -->
-
-### 5.6 Advertisement and Popup Handling
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| FR-050 | — | — | Proposed |
-| FR-051 | — | — | Proposed |
-
-<!-- Ad detection and dismissal. See Ads.md. -->
-
-### 5.7 Logging and Diagnostics
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| FR-060 | — | — | Proposed |
-| FR-061 | — | — | Proposed |
-
-<!-- Log output, debug screenshots, error reporting. -->
-
-### 5.8 Configuration
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| FR-070 | — | — | Proposed |
-| FR-071 | — | — | Proposed |
-
-<!-- Runtime settings, timing, thresholds, device selection. -->
-
+### Principle 4
+No module should directly communicate with unrelated modules.
+All communication follows the project architecture.
 ---
-
-## 6. Non-Functional Requirements
-
-### 6.1 Performance
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| NFR-001 | — | — | Proposed |
-
-<!-- Level solve time, screenshot latency, OCR throughput. -->
-
-### 6.2 Reliability
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| NFR-010 | — | — | Proposed |
-
-<!-- Error recovery, retry behavior, session stability. -->
-
-### 6.3 Usability
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| NFR-020 | — | — | Proposed |
-
-<!-- Setup steps, CLI clarity, log readability. -->
-
-### 6.4 Maintainability
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| NFR-030 | — | — | Proposed |
-
-<!-- Modular layers, testability, documentation coverage. -->
-
-### 6.5 Compatibility
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| NFR-040 | — | — | Proposed |
-
-<!-- Supported Android versions, screen resolutions, host OS. -->
-
-### 6.6 Security and Safety
-
-| ID | Requirement | Priority | Status |
-|----|-------------|----------|--------|
-| NFR-050 | — | — | Proposed |
-
-<!-- No credential storage, local-only operation, no network exfiltration. -->
-
+## 4. High Level Architecture
+The project follows this pipeline.
+Configuration
+↓
+Logging
+↓
+ADB Interface
+↓
+Screenshot Capture
+↓
+Vision Engine
+↓
+Game State Detector
+↓
+Decision Engine
+↓
+Database
+↓
+Swipe Generator
+↓
+ADB Input
+↓
+Android Device
+Each layer communicates only with the layer directly above or below it.
 ---
-
-## 7. Constraints
-
-| ID | Constraint | Category |
-|----|------------|----------|
-| CON-001 | Bot operates via ADB; no game API or memory injection | Technical |
-| CON-002 | Host platform is Windows | Platform |
-| CON-003 | Game UI changes may break template matching | External |
-| CON-004 | — | — |
-
+## 5. Resolution Independence
+Nothing inside the project may depend on one specific phone.
+The Galaxy S25 Ultra is used only as the reference device.
+All coordinates must be calculated dynamically.
+The software must:
+• Detect screen width
+• Detect screen height
+• Detect display density
+• Scale every coordinate
+• Scale every crop region
+• Scale template search regions
+The bot should operate on different Android phones without modifying source code.
 ---
-
-## 8. Assumptions and Dependencies
-
-### 8.1 Assumptions
-
-| ID | Assumption |
-|----|------------|
-| ASM-001 | User has USB debugging enabled on the Android device |
-| ASM-002 | ADB is installed and accessible on the system PATH |
-| ASM-003 | Game is installed and reachable from the device home screen |
-| ASM-004 | — |
-
-### 8.2 Dependencies
-
-| Dependency | Purpose | Required Version |
-|------------|---------|------------------|
-| Python | Runtime | — |
-| ADB | Device communication | — |
-| OpenCV | Image processing | — |
-| Tesseract | OCR | — |
-| — | — | — |
-
+## 6. Coding Standards
+Every module must:
+- use type hints
+- contain docstrings
+- avoid duplicated code
+- use descriptive names
+- use logging instead of print()
+- avoid global variables whenever possible
 ---
-
-## 9. Acceptance Criteria
-
-### 9.1 Minimum Viable Product
-
-<!-- Conditions that define MVP completion. -->
-
-- [ ] —
-- [ ] —
-
-### 9.2 Full Release
-
-<!-- Conditions that define production-ready release. -->
-
-- [ ] —
-- [ ] —
-
+## 7. Error Handling
+The bot must never crash because of:
+- OCR failure
+- Template mismatch
+- Device disconnect
+- Screenshot failure
+- Missing JSON entry
+Instead it shall:
+- retry
+- recover
+- log the failure
+- continue whenever possible
 ---
-
-## 10. Traceability Matrix
-
-<!-- Map functional requirements to design documents and milestones. -->
-
-| Requirement | Document | Milestone | Notes |
-|-------------|----------|-----------|-------|
-| FR-001 | Architecture.md | M0 | — |
-| FR-010 | Vision.md | M1 | — |
-| FR-020 | Database.md | M2 | — |
-| FR-030 | Gameplay.md | M3 | — |
-| FR-040 | Gameplay.md | M4 | — |
-| FR-050 | Ads.md | M4 | — |
-| — | — | — | — |
-
+## 8. Performance Goals
+Screenshot processing should be as fast as practical.
+Expensive OCR operations should only be used when required.
+Template matching should be preferred whenever possible.
+The software should avoid unnecessary processing.
 ---
-
-## 11. Open Items
-
-<!-- Questions and decisions pending stakeholder input. -->
-
-| # | Item | Owner | Status |
-|---|------|-------|--------|
-| 1 | — | — | Open |
-| 2 | — | — | Open |
+## 9. Future Expansion
+The architecture must support future additions without requiring major redesign.
+Possible future additions include:
+- Multiple languages
+- Different games
+- Different OCR engines
+- Cloud database
+- Machine learning letter detection
+- Different input methods
+The architecture must remain flexible enough to support these additions.
