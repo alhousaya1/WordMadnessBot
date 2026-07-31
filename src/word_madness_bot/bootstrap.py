@@ -17,6 +17,7 @@ from word_madness_bot.config.settings import Settings
 from word_madness_bot.domain.errors import (
     RuntimeNavigationError,
     ScreenshotError,
+    WheelGeometryDetectionError,
     WordMadnessError,
 )
 from word_madness_bot.domain.geometry import PixelPoint
@@ -30,6 +31,11 @@ from word_madness_bot.vision.screen_classifier import (
     ScreenClassification,
     ScreenClassifier,
     ScreenType,
+)
+from word_madness_bot.vision.wheel_geometry import (
+    LetterWheelDetector,
+    WheelGeometryDetector,
+    save_wheel_debug_artifacts,
 )
 
 AndroidFactory = Callable[[Settings, StructuredLogger], AndroidPort]
@@ -58,21 +64,23 @@ class ApplicationRuntime:
     advertisements: AdvertisementPolicy
     recovery: RecoveryStrategy
     screen_classifier: RuntimeScreenClassifier
+    wheel_detector: WheelGeometryDetector
     clock: Clock = field(default=time.monotonic, repr=False)
     sleeper: Sleeper = field(default=time.sleep, repr=False)
     _started: bool = False
 
     def start(self, *, dry_run: bool = False) -> None:
-        """Navigate from the current screen into one playable level."""
+        """Navigate into a level and model its letter-wheel geometry."""
         self.logger.info("runtime.starting", dry_run=dry_run)
         if not dry_run:
             device = self.android.select_device()
             self.android.verify_connection()
             self.logger.info("runtime.device.ready", serial=device.serial)
             screenshot_number = 1
-            classification = self._classify(
-                self._capture_debug_screenshot(f"screenshot-{screenshot_number}.png")
+            capture = self._capture_debug_screenshot(
+                f"screenshot-{screenshot_number}.png"
             )
+            classification = self._classify(capture)
 
             if classification.screen is ScreenType.DAILY_DASH_POPUP:
                 if classification.close_button is None:
@@ -88,11 +96,10 @@ class ApplicationRuntime:
                 self.android.tap(point)
                 self.sleeper(0.5)
                 screenshot_number += 1
-                classification = self._classify(
-                    self._capture_debug_screenshot(
-                        f"screenshot-{screenshot_number}.png"
-                    )
+                capture = self._capture_debug_screenshot(
+                    f"screenshot-{screenshot_number}.png"
                 )
+                classification = self._classify(capture)
 
             if classification.screen is ScreenType.HOME_SCREEN:
                 if classification.start_button is None:
@@ -120,11 +127,10 @@ class ApplicationRuntime:
                 self.android.tap(point)
                 self.sleeper(2.0)
                 screenshot_number += 1
-                classification = self._classify(
-                    self._capture_debug_screenshot(
-                        f"screenshot-{screenshot_number}.png"
-                    )
+                capture = self._capture_debug_screenshot(
+                    f"screenshot-{screenshot_number}.png"
                 )
+                classification = self._classify(capture)
 
             if classification.screen is not ScreenType.LEVEL_SCREEN:
                 self._raise_navigation_failure(
@@ -134,6 +140,7 @@ class ApplicationRuntime:
                 "runtime.level.entered",
                 template_confidence=classification.confidence,
             )
+            self._detect_wheel_geometry(capture)
         self._started = True
         self.logger.info("runtime.started", dry_run=dry_run)
 
@@ -152,6 +159,34 @@ class ApplicationRuntime:
         raise RuntimeNavigationError(
             f"Unable to enter level: {reason} "
             f"(detected {classification.screen.value})"
+        )
+
+    def _detect_wheel_geometry(self, capture: ScreenCapture) -> None:
+        started = self.clock()
+        try:
+            geometry = self.wheel_detector.detect(capture)
+            annotated_path, json_path = save_wheel_debug_artifacts(
+                self.settings.debug_directory,
+                capture,
+                geometry,
+                self.wheel_detector,
+            )
+        except WheelGeometryDetectionError as error:
+            self.logger.exception(
+                "runtime.wheel.detection_failed",
+                detection_duration_seconds=self.clock() - started,
+                error=str(error),
+            )
+            raise
+        self.logger.info(
+            "runtime.wheel.detected",
+            detection_duration_seconds=self.clock() - started,
+            center_x=geometry.center.x,
+            center_y=geometry.center.y,
+            radius=geometry.radius,
+            number_of_letters=len(geometry.letters),
+            annotated_filename=str(annotated_path),
+            json_filename=str(json_path),
         )
 
     def _classify(self, capture: ScreenCapture) -> ScreenClassification:
@@ -208,6 +243,7 @@ def build_runtime(
     android_factory: AndroidFactory = AdbClient,
     level_factory: LevelFactory = JsonLevelRepository.from_package,
     screen_classifier: RuntimeScreenClassifier | None = None,
+    wheel_detector: WheelGeometryDetector | None = None,
     clock: Clock = time.monotonic,
     sleeper: Sleeper = time.sleep,
 ) -> ApplicationRuntime:
@@ -228,6 +264,7 @@ def build_runtime(
         advertisements=AdvertisementPolicy(),
         recovery=RecoveryStrategy(RetryPolicy(), TimeoutPolicy()),
         screen_classifier=screen_classifier or ScreenClassifier(),
+        wheel_detector=wheel_detector or LetterWheelDetector(),
         clock=clock,
         sleeper=sleeper,
     )
