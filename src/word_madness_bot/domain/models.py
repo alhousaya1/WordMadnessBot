@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
 
 from word_madness_bot.domain.errors import DomainValidationError
-from word_madness_bot.domain.geometry import PixelPoint, ScreenSize
+from word_madness_bot.domain.geometry import NormalizedPoint, PixelPoint, ScreenSize
 from word_madness_bot.domain.states import GameState
 
 
@@ -116,3 +117,34 @@ class StateObservation:
             raise DomainValidationError("State confidence must be between zero and one")
         if self.consecutive_observations <= 0:
             raise DomainValidationError("Consecutive observations must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class LetterPosition:
+    """One detected wheel letter at a resolution-independent position."""
+
+    character: str
+    position: NormalizedPoint
+
+    def __post_init__(self) -> None:
+        normalized = unicodedata.normalize("NFC", self.character.strip()).upper()
+        if len(normalized) != 1 or not normalized.isalpha():
+            raise DomainValidationError("A letter position requires one alphabetic character")
+        object.__setattr__(self, "character", normalized)
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedSwipePath:
+    """A validated input-free swipe plan in normalized coordinates."""
+
+    points: tuple[NormalizedPoint, ...]
+    duration_ms: int
+    word: str
+
+    def __post_init__(self) -> None:
+        if len(self.points) < 2:
+            raise DomainValidationError("A normalized swipe requires at least two points")
+        if self.duration_ms <= 0:
+            raise DomainValidationError("Swipe duration must be positive")
+        if len(self.word) < 2 or not self.word.isalpha():
+            raise DomainValidationError("A swipe path requires an alphabetic word")

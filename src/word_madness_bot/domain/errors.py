@@ -93,3 +93,7 @@ class LevelNotFoundError(LevelRepositoryError):
     def __init__(self, number: int) -> None:
         self.number = number
         super().__init__(f"Level {number} was not found")
+
+
+class SwipePlanningError(DomainValidationError):
+    """Raised when a word cannot produce a valid swipe path."""
