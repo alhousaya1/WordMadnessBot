@@ -6,6 +6,7 @@ import pytest
 
 from word_madness_bot.cli import create_parser, main
 from word_madness_bot.config.settings import Settings
+from word_madness_bot.domain.errors import ScreenshotError
 
 
 class FakeRuntime:
@@ -65,4 +66,17 @@ def test_cli_gracefully_handles_keyboard_interrupt() -> None:
     runtime = FakeRuntime(interrupt=True)
     result = main([], environ={}, runtime_builder=lambda settings: runtime, stderr=io.StringIO())
     assert result == 130
+    assert runtime.shutdowns == 1
+
+class FailingRuntime(FakeRuntime):
+    def start(self, *, dry_run: bool = False) -> None:
+        raise ScreenshotError("capture failed")
+
+
+def test_cli_returns_nonzero_when_screenshot_capture_fails() -> None:
+    runtime = FailingRuntime()
+    errors = io.StringIO()
+    result = main([], environ={}, runtime_builder=lambda settings: runtime, stderr=errors)
+    assert result == 1
+    assert "runtime error: capture failed" in errors.getvalue()
     assert runtime.shutdowns == 1

@@ -29,6 +29,7 @@ def test_settings_load_environment_overrides() -> None:
             "WMB_LOG_DIRECTORY": "var/log",
             "WMB_SCREENSHOT_DIRECTORY": "var/screens",
             "WMB_TEMPLATE_DIRECTORY": "resources/templates",
+            "WMB_DEBUG_DIRECTORY": "var/debug",
         }
     )
 
@@ -37,6 +38,7 @@ def test_settings_load_environment_overrides() -> None:
     assert settings.adb_retries == 5
     assert settings.log_level == "DEBUG"
     assert settings.template_directory == Path("resources/templates")
+    assert settings.debug_directory == Path("var/debug")
 
 
 @pytest.mark.parametrize(

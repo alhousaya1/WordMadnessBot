@@ -25,6 +25,7 @@ class Settings:
     log_directory: Path = Path("logs")
     screenshot_directory: Path = Path("screenshots")
     template_directory: Path = Path("templates")
+    debug_directory: Path = Path("debug")
 
     def __post_init__(self) -> None:
         if not self.adb_executable.strip():
@@ -61,6 +62,7 @@ class Settings:
             template_directory=Path(
                 values.get(f"{cls.ENV_PREFIX}TEMPLATE_DIRECTORY", "templates")
             ),
+            debug_directory=Path(values.get(f"{cls.ENV_PREFIX}DEBUG_DIRECTORY", "debug")),
         )
 
 
