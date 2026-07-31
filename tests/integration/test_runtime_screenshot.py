@@ -19,5 +19,5 @@ def test_runtime_captures_real_device_screenshot(tmp_path: Path) -> None:
     runtime = build_runtime(settings)
     runtime.start()
     runtime.shutdown()
-    screenshot = tmp_path / "screenshot.png"
+    screenshot = tmp_path / "screenshot-1.png"
     assert parse_png_size(screenshot.read_bytes()).width > 0
