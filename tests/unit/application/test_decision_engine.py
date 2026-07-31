@@ -13,7 +13,7 @@ from word_madness_bot.domain.states import GameState
         (GameState.HOME, Action.START_LEVEL),
         (GameState.PLAYING, Action.PLAY_LEVEL),
         (GameState.VICTORY, Action.ADVANCE),
-        (GameState.ADVERTISEMENT, Action.DEFER_ADVERTISEMENT),
+        (GameState.ADVERTISEMENT, Action.HANDLE_ADVERTISEMENT),
         (GameState.UNKNOWN, Action.WAIT),
     ],
 )
