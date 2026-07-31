@@ -1,4 +1,4 @@
-"""Integration of runtime capture, OpenCV classification, and popup dismissal."""
+"""Integration of runtime capture, real-template classification, and popup dismissal."""
 
 from __future__ import annotations
 
@@ -39,22 +39,21 @@ class Android:
         return lambda *args, **kwargs: None
 
 
-def _capture(*templates: tuple[str, int, int]) -> ScreenCapture:
-    image = Image.new("L", (180, 240), 24)
-    for name, left, top in templates:
-        data = files("word_madness_bot.resources.templates").joinpath(name).read_bytes()
-        template = Image.open(io.BytesIO(data)).convert("L")
-        image.paste(template, (left, top))
+def _home_capture() -> ScreenCapture:
+    image = Image.new("L", (800, 500), 24)
+    data = files("word_madness_bot.resources.templates").joinpath("home_screen.png").read_bytes()
+    image.paste(Image.open(io.BytesIO(data)).convert("L"), (50, 50))
     output = io.BytesIO()
     image.save(output, format="PNG")
-    return ScreenCapture(output.getvalue(), ScreenSize(180, 240))
+    return ScreenCapture(output.getvalue(), ScreenSize(800, 500))
 
 
-def test_runtime_dismisses_daily_dash_and_exits_after_reclassification(tmp_path: Path) -> None:
+def test_runtime_dismisses_supplied_daily_dash_and_reclassifies(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[1] / "fixtures" / "images" / "daily_dash_popup.png"
     android = Android(
         (
-            _capture(("daily_dash_popup.png", 30, 70), ("daily_dash_close.png", 140, 10)),
-            _capture(("home_screen.png", 60, 90)),
+            ScreenCapture(fixture.read_bytes(), ScreenSize(1440, 3120)),
+            _home_capture(),
         )
     )
     runtime = build_runtime(
@@ -66,6 +65,6 @@ def test_runtime_dismisses_daily_dash_and_exits_after_reclassification(tmp_path:
     )
     runtime.start()
     runtime.shutdown()
-    assert android.taps == [PixelPoint(150, 20)]
+    assert android.taps == [PixelPoint(1290, 845)]
     assert (tmp_path / "screenshot-1.png").exists()
     assert (tmp_path / "screenshot-2.png").exists()
