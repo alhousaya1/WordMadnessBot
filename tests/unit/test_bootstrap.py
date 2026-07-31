@@ -14,6 +14,7 @@ from word_madness_bot.bootstrap import ApplicationRuntime, build_runtime
 from word_madness_bot.config.logging import StructuredLogger, configure_logging
 from word_madness_bot.config.settings import Settings
 from word_madness_bot.domain.errors import (
+    OcrError,
     RuntimeNavigationError,
     ScreenshotError,
     WheelGeometryDetectionError,
@@ -21,6 +22,11 @@ from word_madness_bot.domain.errors import (
 from word_madness_bot.domain.geometry import PixelPoint, PixelRect, ScreenSize
 from word_madness_bot.domain.models import DeviceDescriptor, DeviceState, ScreenCapture
 from word_madness_bot.infrastructure.levels.json_repository import JsonLevelRepository
+from word_madness_bot.vision.letter_recognition import (
+    RecognizedLetter,
+    WheelLetterRecognition,
+    WheelLetterRecognitionPort,
+)
 from word_madness_bot.vision.screen_classifier import ScreenClassification, ScreenType
 from word_madness_bot.vision.wheel_geometry import (
     LetterPosition,
@@ -78,6 +84,34 @@ class FakeWheelDetector:
         return PNG
 
 
+class FakeLetterRecognizer:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls = 0
+
+    def recognize(
+        self,
+        capture: ScreenCapture,
+        geometry: LetterWheelGeometry,
+        debug_directory: Path,
+    ) -> WheelLetterRecognition:
+        self.calls += 1
+        if self.fail:
+            raise OcrError("letters missing")
+        return WheelLetterRecognition(
+            tuple(
+                RecognizedLetter(
+                    index=position.index,
+                    character=character,
+                    confidence=0.9,
+                    elapsed_seconds=0.01,
+                    crop_path=debug_directory / "letters" / f"letter-{position.index}.png",
+                )
+                for position, character in zip(geometry.letters, "ABC", strict=True)
+            )
+        )
+
+
 class FakeClassifier:
     def __init__(self, *results: ScreenClassification) -> None:
         default = ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99)
@@ -98,6 +132,7 @@ def _build(
     clock: Callable[[], float] = lambda: 1.0,
     sleeper: Callable[[float], None] | None = None,
     wheel_detector: WheelGeometryDetector | None = None,
+    letter_recognizer: WheelLetterRecognitionPort | None = None,
 ) -> ApplicationRuntime:
     return build_runtime(
         Settings(debug_directory=directory),
@@ -106,6 +141,7 @@ def _build(
         level_factory=lambda: JsonLevelRepository.from_json('{"levels": []}'),
         screen_classifier=classifier,
         wheel_detector=wheel_detector or FakeWheelDetector(),
+        letter_recognizer=letter_recognizer or FakeLetterRecognizer(),
         clock=clock,
         sleeper=(lambda _: None) if sleeper is None else sleeper,
     )
@@ -268,6 +304,20 @@ def test_wheel_detection_failure_logs_and_raises(tmp_path: Path) -> None:
     output = stream.getvalue()
     assert '"event": "runtime.wheel.detection_failed"' in output
     assert '"error": "wheel missing"' in output
+
+
+def test_letter_recognition_failure_logs_and_raises(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    runtime = _build(
+        FakeAndroid(),
+        FakeClassifier(ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99)),
+        tmp_path,
+        logger=configure_logging(name="test.letters.failure", stream=stream),
+        letter_recognizer=FakeLetterRecognizer(fail=True),
+    )
+    with pytest.raises(OcrError, match="letters missing"):
+        runtime.start()
+    assert '"event": "runtime.letters.recognition_failed"' in stream.getvalue()
 
 
 def test_dry_run_has_no_device_screenshot_or_classification_io(tmp_path: Path) -> None:

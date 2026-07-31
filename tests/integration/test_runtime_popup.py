@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, cast
@@ -78,3 +79,13 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     assert (tmp_path / "screenshot-3.png").exists()
     assert (tmp_path / "letter-wheel-annotated.png").exists()
     assert (tmp_path / "letter-wheel-geometry.json").exists()
+    crops = sorted((tmp_path / "letters").glob("letter-*.png"))
+    assert [path.name for path in crops] == [
+        "letter-0.png",
+        "letter-1.png",
+        "letter-2.png",
+        "letter-3.png",
+        "letter-4.png",
+    ]
+    payload = json.loads((tmp_path / "letters.json").read_text(encoding="utf-8"))
+    assert "".join(item["character"] for item in payload["letters"]) == "OUNFD"

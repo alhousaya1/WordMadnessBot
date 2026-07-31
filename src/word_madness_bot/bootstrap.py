@@ -15,6 +15,7 @@ from word_madness_bot.application.recovery import RecoveryStrategy, RetryPolicy,
 from word_madness_bot.config.logging import StructuredLogger, configure_logging
 from word_madness_bot.config.settings import Settings
 from word_madness_bot.domain.errors import (
+    OcrError,
     RuntimeNavigationError,
     ScreenshotError,
     WheelGeometryDetectionError,
@@ -27,6 +28,10 @@ from word_madness_bot.gameplay.swipe_generator import SwipePathPlanner
 from word_madness_bot.infrastructure.adb.client import AdbClient
 from word_madness_bot.infrastructure.adb.screenshot import save_screenshot
 from word_madness_bot.infrastructure.levels.json_repository import JsonLevelRepository
+from word_madness_bot.vision.letter_recognition import (
+    WheelLetterRecognitionPort,
+    WheelLetterRecognizer,
+)
 from word_madness_bot.vision.screen_classifier import (
     ScreenClassification,
     ScreenClassifier,
@@ -34,6 +39,7 @@ from word_madness_bot.vision.screen_classifier import (
 )
 from word_madness_bot.vision.wheel_geometry import (
     LetterWheelDetector,
+    LetterWheelGeometry,
     WheelGeometryDetector,
     save_wheel_debug_artifacts,
 )
@@ -65,12 +71,13 @@ class ApplicationRuntime:
     recovery: RecoveryStrategy
     screen_classifier: RuntimeScreenClassifier
     wheel_detector: WheelGeometryDetector
+    letter_recognizer: WheelLetterRecognitionPort
     clock: Clock = field(default=time.monotonic, repr=False)
     sleeper: Sleeper = field(default=time.sleep, repr=False)
     _started: bool = False
 
     def start(self, *, dry_run: bool = False) -> None:
-        """Navigate into a level and model its letter-wheel geometry."""
+        """Navigate into a level, model its wheel, and recognize its letters."""
         self.logger.info("runtime.starting", dry_run=dry_run)
         if not dry_run:
             device = self.android.select_device()
@@ -140,7 +147,8 @@ class ApplicationRuntime:
                 "runtime.level.entered",
                 template_confidence=classification.confidence,
             )
-            self._detect_wheel_geometry(capture)
+            geometry = self._detect_wheel_geometry(capture)
+            self._recognize_letters(capture, geometry)
         self._started = True
         self.logger.info("runtime.started", dry_run=dry_run)
 
@@ -161,7 +169,7 @@ class ApplicationRuntime:
             f"(detected {classification.screen.value})"
         )
 
-    def _detect_wheel_geometry(self, capture: ScreenCapture) -> None:
+    def _detect_wheel_geometry(self, capture: ScreenCapture) -> LetterWheelGeometry:
         started = self.clock()
         try:
             geometry = self.wheel_detector.detect(capture)
@@ -187,6 +195,39 @@ class ApplicationRuntime:
             number_of_letters=len(geometry.letters),
             annotated_filename=str(annotated_path),
             json_filename=str(json_path),
+        )
+        return geometry
+
+    def _recognize_letters(
+        self,
+        capture: ScreenCapture,
+        geometry: LetterWheelGeometry,
+    ) -> None:
+        try:
+            recognition = self.letter_recognizer.recognize(
+                capture,
+                geometry,
+                self.settings.debug_directory,
+            )
+        except OcrError as error:
+            self.logger.exception(
+                "runtime.letters.recognition_failed",
+                error=str(error),
+            )
+            raise
+        for letter in recognition.letters:
+            self.logger.info(
+                "runtime.letter.recognized",
+                index=letter.index,
+                detected_character=letter.character,
+                confidence=letter.confidence,
+                elapsed_recognition_seconds=letter.elapsed_seconds,
+                crop_filename=str(letter.crop_path),
+            )
+        self.logger.info(
+            "runtime.letters.recognized",
+            number_of_letters=len(recognition.letters),
+            output_filename=str(self.settings.debug_directory / "letters.json"),
         )
 
     def _classify(self, capture: ScreenCapture) -> ScreenClassification:
@@ -244,6 +285,7 @@ def build_runtime(
     level_factory: LevelFactory = JsonLevelRepository.from_package,
     screen_classifier: RuntimeScreenClassifier | None = None,
     wheel_detector: WheelGeometryDetector | None = None,
+    letter_recognizer: WheelLetterRecognitionPort | None = None,
     clock: Clock = time.monotonic,
     sleeper: Sleeper = time.sleep,
 ) -> ApplicationRuntime:
@@ -265,6 +307,7 @@ def build_runtime(
         recovery=RecoveryStrategy(RetryPolicy(), TimeoutPolicy()),
         screen_classifier=screen_classifier or ScreenClassifier(),
         wheel_detector=wheel_detector or LetterWheelDetector(),
+        letter_recognizer=letter_recognizer or WheelLetterRecognizer(),
         clock=clock,
         sleeper=sleeper,
     )

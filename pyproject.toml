@@ -36,6 +36,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "word_madness_bot.resources.levels" = ["levels.json"]
+"word_madness_bot.resources.glyphs" = ["*.png"]
 "word_madness_bot.resources.templates" = ["*"]
 
 [tool.ruff]
