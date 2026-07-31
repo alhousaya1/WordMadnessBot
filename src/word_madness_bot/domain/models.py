@@ -98,3 +98,21 @@ class VisionObservation:
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
             raise DomainValidationError("Vision confidence must be between zero and one")
+
+
+@dataclass(frozen=True, slots=True)
+class StateObservation:
+    """A confidence-bearing result from temporal game-state detection."""
+
+    state: GameState
+    confidence: float
+    evidence: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    stable: bool = False
+    consecutive_observations: int = 1
+    transition_valid: bool = True
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.confidence <= 1.0:
+            raise DomainValidationError("State confidence must be between zero and one")
+        if self.consecutive_observations <= 0:
+            raise DomainValidationError("Consecutive observations must be positive")
