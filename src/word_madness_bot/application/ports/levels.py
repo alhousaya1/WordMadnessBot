@@ -11,6 +11,6 @@ from word_madness_bot.domain.models import Level
 class LevelRepository(Protocol):
     """Replaceable source of validated level data."""
 
-    def get_level(self, number: int) -> Level | None:
-        """Return a level when known, otherwise ``None``."""
+    def get_level(self, number: int) -> Level:
+        """Return a known level or raise a typed repository error."""
         ...
