@@ -97,3 +97,15 @@ class LevelNotFoundError(LevelRepositoryError):
 
 class SwipePlanningError(DomainValidationError):
     """Raised when a word cannot produce a valid swipe path."""
+
+
+class WorkflowError(WordMadnessError):
+    """Base exception for bounded application workflows."""
+
+
+class WorkflowTimeoutError(WorkflowError):
+    """Raised when a workflow reaches its configured polling bound."""
+
+
+class WorkflowCancelledError(WorkflowError):
+    """Raised when workflow cancellation is requested."""
