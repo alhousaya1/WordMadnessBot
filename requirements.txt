@@ -1,11 +1,2 @@
-opencv-python
-numpy
-Pillow
-pytesseract
-requests
-beautifulsoup4
-lxml
-adbutils
-rapidfuzz
-colorama
-rich
+numpy>=2.1,<3
+Pillow>=11,<12

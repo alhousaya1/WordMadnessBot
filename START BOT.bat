@@ -3,8 +3,11 @@ title Word Madness Bot
 
 cd /d "%~dp0"
 
-call venv\Scripts\activate
+if not exist ".venv\Scripts\python.exe" (
+    echo Word Madness Bot is not installed. Run INSTALL.bat first.
+    exit /b 1
+)
 
-python main.py
-
-pause
+call .venv\Scripts\activate.bat
+word-madness-bot run
+exit /b %errorlevel%
