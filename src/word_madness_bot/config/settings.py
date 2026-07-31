@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar, Mapping
+from typing import ClassVar
 
 from word_madness_bot.domain.errors import ConfigurationError
 

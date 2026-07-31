@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Production foundation for the Word Madness Android automation bot"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Proprietary" }
+license = "LicenseRef-Proprietary"
 authors = [{ name = "Word Madness Bot contributors" }]
 dependencies = ["Pillow>=11.0"]
 
@@ -19,6 +19,7 @@ word-madness-bot = "word_madness_bot.cli:main"
 dev = [
     "build>=1.2",
     "mypy>=1.10",
+    "pip-audit>=2.7",
     "pytest>=8.0",
     "ruff>=0.9",
 ]
@@ -31,17 +32,12 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "word_madness_bot.resources.levels" = ["levels.json"]
+"word_madness_bot.resources.templates" = ["*"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = [
-    "config",
-    "core",
-    "main.py",
-    "tools",
-    "venv",
-]
+extend-exclude = ["venv"]
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "RUF", "UP"]
@@ -57,7 +53,7 @@ follow_imports = "skip"
 warn_unreachable = true
 show_error_codes = true
 pretty = true
-exclude = "^(config|core|tools|venv)/"
+exclude = "^venv/"
 
 [[tool.mypy.overrides]]
 module = "tests.*"
