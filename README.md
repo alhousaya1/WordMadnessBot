@@ -1,31 +1,51 @@
 # Word Madness Bot
 
-The production application lives in `src/word_madness_bot`. The legacy prototype remains available during migration but is not used by the production runtime.
+Word Madness Bot is an installable Python application for layered, testable Android automation. The only supported runtime is the `word_madness_bot` package under `src/`.
+
+## Requirements
+
+- Python 3.11 or newer
+- Android Debug Bridge (`adb`) for device-backed runs
+- one connected, authorized Android device for normal startup
 
 ## Install
-
-Install Python 3.11 or newer and ADB, then install the package:
 
 ```console
 python -m pip install .
 ```
 
+For development:
+
+```console
+python -m pip install -e ".[dev]"
+```
+
 ## Configure
 
-Runtime settings use `WMB_` environment variables. Supported values include `WMB_ADB_EXECUTABLE`, `WMB_ADB_TIMEOUT_SECONDS`, `WMB_ADB_RETRIES`, `WMB_LOG_LEVEL`, and the data, log, screenshot, and template directory variables documented by `Settings`.
+Settings are loaded from `WMB_` environment variables. Available variables are `WMB_ADB_EXECUTABLE`, `WMB_ADB_TIMEOUT_SECONDS`, `WMB_ADB_RETRIES`, `WMB_LOG_LEVEL`, `WMB_DATA_DIRECTORY`, `WMB_LOG_DIRECTORY`, `WMB_SCREENSHOT_DIRECTORY`, and `WMB_TEMPLATE_DIRECTORY`.
 
 ## Run
 
-Validate composition and configuration without contacting an Android device:
+Validate configuration and composition without device I/O:
 
 ```console
 word-madness-bot --dry-run
 ```
 
-Start against the single connected and authorized Android device:
+Start with the single connected and authorized device:
 
 ```console
 word-madness-bot
 ```
 
-The equivalent module command is `python -m word_madness_bot`. Startup errors return non-zero exit codes, and interruption triggers graceful shutdown.
+`python -m word_madness_bot` is equivalent. See `docs/OPERATIONS.md` for acceptance and rollback procedures and `docs/TROUBLESHOOTING.md` for typed startup failures.
+
+## Quality
+
+```console
+ruff check .
+mypy
+pytest
+python -m build
+pip-audit
+```
