@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from word_madness_bot.domain.geometry import ScreenSize
+from word_madness_bot.domain.geometry import PixelRect, ScreenSize
 from word_madness_bot.domain.models import ScreenCapture
 from word_madness_bot.vision.screen_classifier import ScreenClassifier, ScreenType
 
@@ -18,12 +18,12 @@ def _template(name: str) -> Image.Image:
 
 
 def _capture(*templates: tuple[str, int, int]) -> ScreenCapture:
-    image = Image.new("L", (800, 500), 24)
+    image = Image.new("L", (1400, 1000), 24)
     for name, left, top in templates:
         image.paste(_template(name), (left, top))
     output = io.BytesIO()
     image.save(output, format="PNG")
-    return ScreenCapture(output.getvalue(), ScreenSize(800, 500))
+    return ScreenCapture(output.getvalue(), ScreenSize(1400, 1000))
 
 
 @pytest.mark.parametrize(
@@ -48,6 +48,29 @@ def test_classifies_daily_dash_and_locates_close_button() -> None:
     assert result.close_button is not None
     assert result.close_button.left + result.close_button.width // 2 == 690
     assert result.close_button.top + result.close_button.height // 2 == 375
+
+
+def test_locates_start_level_button_on_home_screen() -> None:
+    result = ScreenClassifier().classify(
+        _capture(("home_screen.png", 30, 80), ("start_level_button.png", 300, 500))
+    )
+    assert result.screen is ScreenType.HOME_SCREEN
+    assert result.start_button is not None
+    assert result.start_button.left == 300
+    assert result.start_button.top == 500
+    assert result.start_button_confidence is not None
+    assert result.start_button_confidence >= 0.99
+
+
+def test_supplied_home_screenshot_locates_start_button() -> None:
+    screenshot = Path(__file__).parents[2] / "fixtures" / "images" / "home_screen.png"
+    result = ScreenClassifier().classify(
+        ScreenCapture(screenshot.read_bytes(), ScreenSize(1440, 3120))
+    )
+    assert result.screen is ScreenType.HOME_SCREEN
+    assert result.start_button == PixelRect(260, 1930, 920, 220)
+    assert result.start_button_confidence is not None
+    assert result.start_button_confidence >= 0.99
 
 
 def test_supplied_daily_dash_screenshot_regression() -> None:

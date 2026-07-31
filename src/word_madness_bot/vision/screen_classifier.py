@@ -14,7 +14,7 @@ from word_madness_bot.domain.models import ScreenCapture
 
 
 class ScreenType(StrEnum):
-    """Screen labels supported by the Phase 2 runtime boundary."""
+    """Screen labels supported by the bounded production runtime."""
 
     DAILY_DASH_POPUP = "daily_dash_popup"
     HOME_SCREEN = "home_screen"
@@ -24,15 +24,19 @@ class ScreenType(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ScreenClassification:
-    """One screen decision and optional Daily Dash close control."""
+    """One screen decision and optional matched action controls."""
 
     screen: ScreenType
     confidence: float
     close_button: PixelRect | None = None
+    start_button: PixelRect | None = None
+    start_button_confidence: float | None = None
 
     def __post_init__(self) -> None:
         if not 0 <= self.confidence <= 1:
             raise ValueError("Screen confidence must be between zero and one")
+        if self.start_button_confidence is not None and not 0 <= self.start_button_confidence <= 1:
+            raise ValueError("Start button confidence must be between zero and one")
 
 
 cv2: Any = import_module("cv2")
@@ -40,7 +44,7 @@ np: Any = import_module("numpy")
 
 
 class ScreenClassifier:
-    """Classify screenshots and locate Daily Dash close controls with OpenCV."""
+    """Classify screenshots and locate bounded runtime action controls."""
 
     TEMPLATE_NAMES: ClassVar[dict[ScreenType, str]] = {
         ScreenType.DAILY_DASH_POPUP: "daily_dash_popup.png",
@@ -56,9 +60,10 @@ class ScreenClassifier:
             screen: _load_template(name) for screen, name in self.TEMPLATE_NAMES.items()
         }
         self._close_template = _load_template("daily_dash_close.png")
+        self._start_template = _load_template("start_level_button.png")
 
     def classify(self, capture: ScreenCapture) -> ScreenClassification:
-        """Return the strongest supported screen and close-button location."""
+        """Return the strongest supported screen and matched action control."""
         source = _decode_png(capture.data)
         popup_confidence, _ = _match(
             source, self._templates[ScreenType.DAILY_DASH_POPUP]
@@ -66,19 +71,37 @@ class ScreenClassifier:
         if popup_confidence >= self.minimum_confidence:
             confidence, screen = popup_confidence, ScreenType.DAILY_DASH_POPUP
         else:
-            ranked = [
-                (_match(source, self._templates[candidate])[0], candidate)
-                for candidate in (ScreenType.HOME_SCREEN, ScreenType.LEVEL_SCREEN)
-            ]
-            confidence, screen = max(ranked, key=lambda item: item[0])
+            home_confidence, _ = _match(
+                source, self._templates[ScreenType.HOME_SCREEN]
+            )
+            level_confidence, _ = _match(
+                source, self._templates[ScreenType.LEVEL_SCREEN]
+            )
+            if home_confidence >= level_confidence:
+                confidence, screen = home_confidence, ScreenType.HOME_SCREEN
+            else:
+                confidence, screen = level_confidence, ScreenType.LEVEL_SCREEN
         if confidence < self.minimum_confidence:
             return ScreenClassification(ScreenType.UNKNOWN, confidence)
+
         close_button = None
+        start_button = None
+        start_button_confidence = None
         if screen is ScreenType.DAILY_DASH_POPUP:
             close_confidence, region = _match(source, self._close_template)
             if close_confidence >= self.minimum_confidence:
                 close_button = region
-        return ScreenClassification(screen, confidence, close_button)
+        elif screen is ScreenType.HOME_SCREEN:
+            start_button_confidence, region = _match(source, self._start_template)
+            if start_button_confidence >= self.minimum_confidence:
+                start_button = region
+        return ScreenClassification(
+            screen,
+            confidence,
+            close_button,
+            start_button,
+            start_button_confidence,
+        )
 
 
 def _decode_png(data: bytes) -> Any:

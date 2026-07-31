@@ -13,7 +13,7 @@ from word_madness_bot.application.ports.android import AndroidPort
 from word_madness_bot.bootstrap import ApplicationRuntime, build_runtime
 from word_madness_bot.config.logging import StructuredLogger, configure_logging
 from word_madness_bot.config.settings import Settings
-from word_madness_bot.domain.errors import ScreenshotError
+from word_madness_bot.domain.errors import RuntimeNavigationError, ScreenshotError
 from word_madness_bot.domain.geometry import PixelPoint, PixelRect, ScreenSize
 from word_madness_bot.domain.models import DeviceDescriptor, DeviceState, ScreenCapture
 from word_madness_bot.infrastructure.levels.json_repository import JsonLevelRepository
@@ -48,7 +48,8 @@ class FakeAndroid:
 
 class FakeClassifier:
     def __init__(self, *results: ScreenClassification) -> None:
-        self.results = iter(results or (ScreenClassification(ScreenType.UNKNOWN, 0.1),))
+        default = ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99)
+        self.results = iter(results or (default,))
         self.calls = 0
 
     def classify(self, capture: ScreenCapture) -> ScreenClassification:
@@ -62,19 +63,17 @@ def _build(
     directory: Path,
     *,
     logger: StructuredLogger | None = None,
-    clock: Callable[[], float] | None = None,
+    clock: Callable[[], float] = lambda: 1.0,
     sleeper: Callable[[float], None] | None = None,
 ) -> ApplicationRuntime:
-    clock_callable = iter((1.0, 1.1, 2.0, 2.1)).__next__ if clock is None else clock
-    sleeper_callable = (lambda _: None) if sleeper is None else sleeper
     return build_runtime(
         Settings(debug_directory=directory),
         logger=logger or StructuredLogger(logging.getLogger("test.runtime")),
         android_factory=lambda settings, supplied_logger: cast(AndroidPort, android),
         level_factory=lambda: JsonLevelRepository.from_json('{"levels": []}'),
         screen_classifier=classifier,
-        clock=clock_callable,
-        sleeper=sleeper_callable,
+        clock=clock,
+        sleeper=(lambda _: None) if sleeper is None else sleeper,
     )
 
 
@@ -87,47 +86,111 @@ def test_build_runtime_wires_existing_production_components(tmp_path: Path) -> N
     assert runtime.screen_classifier is classifier
 
 
-def test_start_captures_classifies_and_logs_metadata(tmp_path: Path) -> None:
+def test_start_captures_classifies_and_logs_level_entry(tmp_path: Path) -> None:
     android = FakeAndroid()
-    classifier = FakeClassifier(ScreenClassification(ScreenType.HOME_SCREEN, 0.97))
+    classifier = FakeClassifier(ScreenClassification(ScreenType.LEVEL_SCREEN, 0.97))
     stream = io.StringIO()
     runtime = _build(
         android,
         classifier,
         tmp_path,
         logger=configure_logging(name="test.capture", stream=stream),
-        clock=iter((10.0, 10.25, 11.0, 11.1)).__next__,
     )
     runtime.start()
     assert (tmp_path / "screenshot-1.png").read_bytes() == PNG
     assert (android.selected, android.verified, android.captures) == (1, 1, 1)
     output = stream.getvalue()
-    assert '"detected_screen": "home_screen"' in output
+    assert '"detected_screen": "level_screen"' in output
     assert '"template_confidence": 0.97' in output
-    assert '"elapsed_detection_seconds"' in output
+    assert '"event": "runtime.level.entered"' in output
 
 
-def test_daily_dash_is_tapped_then_recaptured_and_reclassified(tmp_path: Path) -> None:
+def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     android = FakeAndroid()
     classifier = FakeClassifier(
-        ScreenClassification(ScreenType.DAILY_DASH_POPUP, 0.98, PixelRect(90, 30, 20, 20)),
-        ScreenClassification(ScreenType.HOME_SCREEN, 0.96),
+        ScreenClassification(
+            ScreenType.HOME_SCREEN,
+            0.98,
+            start_button=PixelRect(200, 600, 400, 120),
+            start_button_confidence=0.95,
+        ),
+        ScreenClassification(ScreenType.LEVEL_SCREEN, 0.96),
     )
     sleeps: list[float] = []
+    stream = io.StringIO()
     runtime = _build(
         android,
         classifier,
         tmp_path,
-        clock=iter((1.0, 1.1, 2.0, 2.1, 3.0, 3.1, 4.0, 4.1)).__next__,
+        logger=configure_logging(name="test.home", stream=stream),
         sleeper=sleeps.append,
     )
     runtime.start()
-    assert android.taps == [PixelPoint(100, 40)]
-    assert sleeps == [0.5]
+    assert android.taps == [PixelPoint(400, 660)]
+    assert sleeps == [2.0]
     assert android.captures == 2
     assert classifier.calls == 2
-    assert (tmp_path / "screenshot-1.png").exists()
     assert (tmp_path / "screenshot-2.png").exists()
+    output = stream.getvalue()
+    assert '"event": "runtime.start_level.detected"' in output
+    assert '"button_left": 200' in output
+    assert '"event": "runtime.start_level.tap"' in output
+    assert '"event": "runtime.level.entered"' in output
+
+
+def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
+    android = FakeAndroid()
+    classifier = FakeClassifier(
+        ScreenClassification(
+            ScreenType.DAILY_DASH_POPUP,
+            0.98,
+            close_button=PixelRect(90, 30, 20, 20),
+        ),
+        ScreenClassification(
+            ScreenType.HOME_SCREEN,
+            0.97,
+            start_button=PixelRect(200, 600, 400, 120),
+            start_button_confidence=0.96,
+        ),
+        ScreenClassification(ScreenType.LEVEL_SCREEN, 0.95),
+    )
+    sleeps: list[float] = []
+    runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
+    runtime.start()
+    assert android.taps == [PixelPoint(100, 40), PixelPoint(400, 660)]
+    assert sleeps == [0.5, 2.0]
+    assert android.captures == 3
+    assert classifier.calls == 3
+    assert (tmp_path / "screenshot-3.png").exists()
+
+
+def test_missing_start_button_logs_and_raises(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    runtime = _build(
+        FakeAndroid(),
+        FakeClassifier(ScreenClassification(ScreenType.HOME_SCREEN, 0.97)),
+        tmp_path,
+        logger=configure_logging(name="test.navigation.failure", stream=stream),
+    )
+    with pytest.raises(RuntimeNavigationError, match="start_level_button_not_found"):
+        runtime.start()
+    output = stream.getvalue()
+    assert '"event": "runtime.level.transition_failed"' in output
+    assert '"reason": "start_level_button_not_found"' in output
+
+
+def test_non_level_screen_after_start_logs_and_raises(tmp_path: Path) -> None:
+    classifier = FakeClassifier(
+        ScreenClassification(
+            ScreenType.HOME_SCREEN,
+            0.98,
+            start_button=PixelRect(200, 600, 400, 120),
+            start_button_confidence=0.96,
+        ),
+        ScreenClassification(ScreenType.UNKNOWN, 0.2),
+    )
+    with pytest.raises(RuntimeNavigationError, match="level_screen_not_reached"):
+        _build(FakeAndroid(), classifier, tmp_path).start()
 
 
 def test_capture_failure_is_logged_and_raised(tmp_path: Path) -> None:
@@ -137,7 +200,6 @@ def test_capture_failure_is_logged_and_raised(tmp_path: Path) -> None:
         FakeClassifier(),
         tmp_path,
         logger=configure_logging(name="test.failure", stream=stream),
-        clock=iter((2.0, 2.1)).__next__,
     )
     with pytest.raises(ScreenshotError):
         runtime.start()

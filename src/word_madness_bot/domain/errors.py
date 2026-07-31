@@ -103,6 +103,10 @@ class WorkflowError(WordMadnessError):
     """Base exception for bounded application workflows."""
 
 
+class RuntimeNavigationError(WorkflowError):
+    """Raised when bounded runtime screen navigation cannot complete."""
+
+
 class WorkflowTimeoutError(WorkflowError):
     """Raised when a workflow reaches its configured polling bound."""
 
