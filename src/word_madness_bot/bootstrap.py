@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import NoReturn, Protocol
 
 from word_madness_bot.application.decision_engine import DecisionEngine
 from word_madness_bot.application.game_loop import GameLoop
@@ -14,7 +14,11 @@ from word_madness_bot.application.ports.levels import LevelRepository
 from word_madness_bot.application.recovery import RecoveryStrategy, RetryPolicy, TimeoutPolicy
 from word_madness_bot.config.logging import StructuredLogger, configure_logging
 from word_madness_bot.config.settings import Settings
-from word_madness_bot.domain.errors import ScreenshotError, WordMadnessError
+from word_madness_bot.domain.errors import (
+    RuntimeNavigationError,
+    ScreenshotError,
+    WordMadnessError,
+)
 from word_madness_bot.domain.geometry import PixelPoint
 from word_madness_bot.domain.models import ScreenCapture
 from word_madness_bot.gameplay.ads import AdvertisementPolicy
@@ -59,26 +63,96 @@ class ApplicationRuntime:
     _started: bool = False
 
     def start(self, *, dry_run: bool = False) -> None:
-        """Capture, classify, and dismiss at most one Daily Dash popup."""
+        """Navigate from the current screen into one playable level."""
         self.logger.info("runtime.starting", dry_run=dry_run)
         if not dry_run:
             device = self.android.select_device()
             self.android.verify_connection()
             self.logger.info("runtime.device.ready", serial=device.serial)
-            capture = self._capture_debug_screenshot("screenshot-1.png")
-            classification = self._classify(capture)
-            if (
-                classification.screen is ScreenType.DAILY_DASH_POPUP
-                and classification.close_button is not None
-            ):
+            screenshot_number = 1
+            classification = self._classify(
+                self._capture_debug_screenshot(f"screenshot-{screenshot_number}.png")
+            )
+
+            if classification.screen is ScreenType.DAILY_DASH_POPUP:
+                if classification.close_button is None:
+                    self._raise_navigation_failure(
+                        classification, reason="daily_dash_close_not_found"
+                    )
                 region = classification.close_button
-                point = PixelPoint(region.left + region.width // 2, region.top + region.height // 2)
+                point = PixelPoint(
+                    region.left + region.width // 2,
+                    region.top + region.height // 2,
+                )
                 self.logger.info("runtime.daily_dash.tap", tap_x=point.x, tap_y=point.y)
                 self.android.tap(point)
                 self.sleeper(0.5)
-                self._classify(self._capture_debug_screenshot("screenshot-2.png"))
+                screenshot_number += 1
+                classification = self._classify(
+                    self._capture_debug_screenshot(
+                        f"screenshot-{screenshot_number}.png"
+                    )
+                )
+
+            if classification.screen is ScreenType.HOME_SCREEN:
+                if classification.start_button is None:
+                    self._raise_navigation_failure(
+                        classification, reason="start_level_button_not_found"
+                    )
+                region = classification.start_button
+                point = PixelPoint(
+                    region.left + region.width // 2,
+                    region.top + region.height // 2,
+                )
+                self.logger.info(
+                    "runtime.start_level.detected",
+                    button_left=region.left,
+                    button_top=region.top,
+                    button_width=region.width,
+                    button_height=region.height,
+                    template_confidence=classification.start_button_confidence,
+                )
+                self.logger.info(
+                    "runtime.start_level.tap",
+                    tap_x=point.x,
+                    tap_y=point.y,
+                )
+                self.android.tap(point)
+                self.sleeper(2.0)
+                screenshot_number += 1
+                classification = self._classify(
+                    self._capture_debug_screenshot(
+                        f"screenshot-{screenshot_number}.png"
+                    )
+                )
+
+            if classification.screen is not ScreenType.LEVEL_SCREEN:
+                self._raise_navigation_failure(
+                    classification, reason="level_screen_not_reached"
+                )
+            self.logger.info(
+                "runtime.level.entered",
+                template_confidence=classification.confidence,
+            )
         self._started = True
         self.logger.info("runtime.started", dry_run=dry_run)
+
+    def _raise_navigation_failure(
+        self,
+        classification: ScreenClassification,
+        *,
+        reason: str,
+    ) -> NoReturn:
+        self.logger.error(
+            "runtime.level.transition_failed",
+            reason=reason,
+            detected_screen=classification.screen.value,
+            template_confidence=classification.confidence,
+        )
+        raise RuntimeNavigationError(
+            f"Unable to enter level: {reason} "
+            f"(detected {classification.screen.value})"
+        )
 
     def _classify(self, capture: ScreenCapture) -> ScreenClassification:
         started = self.clock()

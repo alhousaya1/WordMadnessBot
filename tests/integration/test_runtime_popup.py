@@ -1,4 +1,4 @@
-"""Integration of runtime capture, real-template classification, and popup dismissal."""
+"""Integration of popup dismissal and bounded home-to-level navigation."""
 
 from __future__ import annotations
 
@@ -39,21 +39,27 @@ class Android:
         return lambda *args, **kwargs: None
 
 
-def _home_capture() -> ScreenCapture:
-    image = Image.new("L", (800, 500), 24)
-    data = files("word_madness_bot.resources.templates").joinpath("home_screen.png").read_bytes()
-    image.paste(Image.open(io.BytesIO(data)).convert("L"), (50, 50))
+def _capture(*templates: tuple[str, int, int]) -> ScreenCapture:
+    image = Image.new("L", (1400, 1000), 24)
+    for name, left, top in templates:
+        data = files("word_madness_bot.resources.templates").joinpath(name).read_bytes()
+        image.paste(Image.open(io.BytesIO(data)).convert("L"), (left, top))
     output = io.BytesIO()
     image.save(output, format="PNG")
-    return ScreenCapture(output.getvalue(), ScreenSize(800, 500))
+    return ScreenCapture(output.getvalue(), ScreenSize(1400, 1000))
 
 
-def test_runtime_dismisses_supplied_daily_dash_and_reclassifies(tmp_path: Path) -> None:
-    fixture = Path(__file__).parents[1] / "fixtures" / "images" / "daily_dash_popup.png"
+def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
+    tmp_path: Path,
+) -> None:
+    fixtures = Path(__file__).parents[1] / "fixtures" / "images"
+    popup = fixtures / "daily_dash_popup.png"
+    home = fixtures / "home_screen.png"
     android = Android(
         (
-            ScreenCapture(fixture.read_bytes(), ScreenSize(1440, 3120)),
-            _home_capture(),
+            ScreenCapture(popup.read_bytes(), ScreenSize(1440, 3120)),
+            ScreenCapture(home.read_bytes(), ScreenSize(1440, 3120)),
+            _capture(("level_screen.png", 50, 50)),
         )
     )
     runtime = build_runtime(
@@ -65,6 +71,7 @@ def test_runtime_dismisses_supplied_daily_dash_and_reclassifies(tmp_path: Path) 
     )
     runtime.start()
     runtime.shutdown()
-    assert android.taps == [PixelPoint(1290, 845)]
+    assert android.taps == [PixelPoint(1290, 845), PixelPoint(720, 2040)]
     assert (tmp_path / "screenshot-1.png").exists()
     assert (tmp_path / "screenshot-2.png").exists()
+    assert (tmp_path / "screenshot-3.png").exists()
