@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from importlib.resources import files
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -17,12 +18,12 @@ def _template(name: str) -> Image.Image:
 
 
 def _capture(*templates: tuple[str, int, int]) -> ScreenCapture:
-    image = Image.new("L", (180, 240), 24)
+    image = Image.new("L", (800, 500), 24)
     for name, left, top in templates:
         image.paste(_template(name), (left, top))
     output = io.BytesIO()
     image.save(output, format="PNG")
-    return ScreenCapture(output.getvalue(), ScreenSize(180, 240))
+    return ScreenCapture(output.getvalue(), ScreenSize(800, 500))
 
 
 @pytest.mark.parametrize(
@@ -41,12 +42,21 @@ def test_classifies_supported_non_popup_screens(template: str, expected: ScreenT
 
 def test_classifies_daily_dash_and_locates_close_button() -> None:
     result = ScreenClassifier().classify(
-        _capture(("daily_dash_popup.png", 30, 70), ("daily_dash_close.png", 140, 10))
+        _capture(("daily_dash_popup.png", 30, 70), ("daily_dash_close.png", 600, 280))
     )
     assert result.screen is ScreenType.DAILY_DASH_POPUP
     assert result.close_button is not None
-    assert result.close_button.left + result.close_button.width // 2 == 150
-    assert result.close_button.top + result.close_button.height // 2 == 20
+    assert result.close_button.left + result.close_button.width // 2 == 690
+    assert result.close_button.top + result.close_button.height // 2 == 375
+
+
+def test_supplied_daily_dash_screenshot_regression() -> None:
+    screenshot = Path(__file__).parents[2] / "fixtures" / "images" / "daily_dash_popup.png"
+    data = screenshot.read_bytes()
+    result = ScreenClassifier().classify(ScreenCapture(data, ScreenSize(1440, 3120)))
+    assert result.screen is ScreenType.DAILY_DASH_POPUP
+    assert result.confidence >= 0.99
+    assert result.close_button is not None
 
 
 def test_returns_unknown_without_matching_evidence() -> None:

@@ -60,14 +60,17 @@ class ScreenClassifier:
     def classify(self, capture: ScreenCapture) -> ScreenClassification:
         """Return the strongest supported screen and close-button location."""
         source = _decode_png(capture.data)
-        ranked = sorted(
-            (
-                (_match(source, template)[0], screen)
-                for screen, template in self._templates.items()
-            ),
-            reverse=True,
+        popup_confidence, _ = _match(
+            source, self._templates[ScreenType.DAILY_DASH_POPUP]
         )
-        confidence, screen = ranked[0]
+        if popup_confidence >= self.minimum_confidence:
+            confidence, screen = popup_confidence, ScreenType.DAILY_DASH_POPUP
+        else:
+            ranked = [
+                (_match(source, self._templates[candidate])[0], candidate)
+                for candidate in (ScreenType.HOME_SCREEN, ScreenType.LEVEL_SCREEN)
+            ]
+            confidence, screen = max(ranked, key=lambda item: item[0])
         if confidence < self.minimum_confidence:
             return ScreenClassification(ScreenType.UNKNOWN, confidence)
         close_button = None
