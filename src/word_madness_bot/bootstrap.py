@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from word_madness_bot.application.decision_engine import DecisionEngine
 from word_madness_bot.application.game_loop import GameLoop
@@ -14,15 +15,29 @@ from word_madness_bot.application.recovery import RecoveryStrategy, RetryPolicy,
 from word_madness_bot.config.logging import StructuredLogger, configure_logging
 from word_madness_bot.config.settings import Settings
 from word_madness_bot.domain.errors import ScreenshotError, WordMadnessError
+from word_madness_bot.domain.geometry import PixelPoint
+from word_madness_bot.domain.models import ScreenCapture
 from word_madness_bot.gameplay.ads import AdvertisementPolicy
 from word_madness_bot.gameplay.swipe_generator import SwipePathPlanner
 from word_madness_bot.infrastructure.adb.client import AdbClient
 from word_madness_bot.infrastructure.adb.screenshot import save_screenshot
 from word_madness_bot.infrastructure.levels.json_repository import JsonLevelRepository
+from word_madness_bot.vision.screen_classifier import (
+    ScreenClassification,
+    ScreenClassifier,
+    ScreenType,
+)
 
 AndroidFactory = Callable[[Settings, StructuredLogger], AndroidPort]
 LevelFactory = Callable[[], LevelRepository]
 Clock = Callable[[], float]
+Sleeper = Callable[[float], None]
+
+
+class RuntimeScreenClassifier(Protocol):
+    """Narrow classification dependency used by the runtime."""
+
+    def classify(self, capture: ScreenCapture) -> ScreenClassification: ...
 
 
 @dataclass(slots=True)
@@ -38,22 +53,46 @@ class ApplicationRuntime:
     game_loop: GameLoop
     advertisements: AdvertisementPolicy
     recovery: RecoveryStrategy
+    screen_classifier: RuntimeScreenClassifier
     clock: Clock = field(default=time.monotonic, repr=False)
+    sleeper: Sleeper = field(default=time.sleep, repr=False)
     _started: bool = False
 
     def start(self, *, dry_run: bool = False) -> None:
-        """Verify the device and acquire one validated debug screenshot."""
+        """Capture, classify, and dismiss at most one Daily Dash popup."""
         self.logger.info("runtime.starting", dry_run=dry_run)
         if not dry_run:
             device = self.android.select_device()
             self.android.verify_connection()
             self.logger.info("runtime.device.ready", serial=device.serial)
-            self._capture_debug_screenshot()
+            capture = self._capture_debug_screenshot("screenshot-1.png")
+            classification = self._classify(capture)
+            if (
+                classification.screen is ScreenType.DAILY_DASH_POPUP
+                and classification.close_button is not None
+            ):
+                region = classification.close_button
+                point = PixelPoint(region.left + region.width // 2, region.top + region.height // 2)
+                self.logger.info("runtime.daily_dash.tap", tap_x=point.x, tap_y=point.y)
+                self.android.tap(point)
+                self.sleeper(0.5)
+                self._classify(self._capture_debug_screenshot("screenshot-2.png"))
         self._started = True
         self.logger.info("runtime.started", dry_run=dry_run)
 
-    def _capture_debug_screenshot(self) -> None:
-        destination = self.settings.debug_directory / "screenshot.png"
+    def _classify(self, capture: ScreenCapture) -> ScreenClassification:
+        started = self.clock()
+        result = self.screen_classifier.classify(capture)
+        self.logger.info(
+            "runtime.screen.detected",
+            detected_screen=result.screen.value,
+            template_confidence=result.confidence,
+            elapsed_detection_seconds=self.clock() - started,
+        )
+        return result
+
+    def _capture_debug_screenshot(self, filename: str) -> ScreenCapture:
+        destination = self.settings.debug_directory / filename
         started = self.clock()
         try:
             capture = self.android.capture_screenshot()
@@ -78,6 +117,7 @@ class ApplicationRuntime:
             output_filename=str(destination),
             capture_duration_seconds=self.clock() - started,
         )
+        return capture
 
     def shutdown(self) -> None:
         """Complete the lifecycle safely; repeated shutdown is harmless."""
@@ -93,7 +133,9 @@ def build_runtime(
     logger: StructuredLogger | None = None,
     android_factory: AndroidFactory = AdbClient,
     level_factory: LevelFactory = JsonLevelRepository.from_package,
+    screen_classifier: RuntimeScreenClassifier | None = None,
     clock: Clock = time.monotonic,
+    sleeper: Sleeper = time.sleep,
 ) -> ApplicationRuntime:
     """Wire all production components without contacting a device at import time."""
     runtime_logger = logger or configure_logging(level=settings.log_level)
@@ -111,5 +153,7 @@ def build_runtime(
         game_loop=GameLoop(android, levels, planner, decisions),
         advertisements=AdvertisementPolicy(),
         recovery=RecoveryStrategy(RetryPolicy(), TimeoutPolicy()),
+        screen_classifier=screen_classifier or ScreenClassifier(),
         clock=clock,
+        sleeper=sleeper,
     )
