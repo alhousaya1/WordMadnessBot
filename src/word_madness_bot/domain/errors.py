@@ -77,3 +77,19 @@ class ImageDecodeError(VisionError):
 
 class OcrError(VisionError):
     """Raised when an OCR backend fails or returns invalid output."""
+
+
+class LevelRepositoryError(PortError):
+    """Raised when level data cannot be loaded."""
+
+
+class LevelDataError(LevelRepositoryError):
+    """Raised when level data violates the repository schema."""
+
+
+class LevelNotFoundError(LevelRepositoryError):
+    """Raised when a requested level is absent."""
+
+    def __init__(self, number: int) -> None:
+        self.number = number
+        super().__init__(f"Level {number} was not found")
