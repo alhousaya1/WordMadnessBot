@@ -1,0 +1,80 @@
+"""Composition root for the production application."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from word_madness_bot.application.decision_engine import DecisionEngine
+from word_madness_bot.application.game_loop import GameLoop
+from word_madness_bot.application.ports.android import AndroidPort
+from word_madness_bot.application.ports.levels import LevelRepository
+from word_madness_bot.application.recovery import RecoveryStrategy, RetryPolicy, TimeoutPolicy
+from word_madness_bot.config.logging import StructuredLogger, configure_logging
+from word_madness_bot.config.settings import Settings
+from word_madness_bot.gameplay.ads import AdvertisementPolicy
+from word_madness_bot.gameplay.swipe_generator import SwipePathPlanner
+from word_madness_bot.infrastructure.adb.client import AdbClient
+from word_madness_bot.infrastructure.levels.json_repository import JsonLevelRepository
+
+AndroidFactory = Callable[[Settings, StructuredLogger], AndroidPort]
+LevelFactory = Callable[[], LevelRepository]
+
+
+@dataclass(slots=True)
+class ApplicationRuntime:
+    """Owned production dependency graph with an explicit lifecycle."""
+
+    settings: Settings
+    logger: StructuredLogger
+    android: AndroidPort
+    levels: LevelRepository
+    planner: SwipePathPlanner
+    decisions: DecisionEngine
+    game_loop: GameLoop
+    advertisements: AdvertisementPolicy
+    recovery: RecoveryStrategy
+    _started: bool = False
+
+    def start(self, *, dry_run: bool = False) -> None:
+        """Validate external dependencies unless this is an I/O-free dry run."""
+        self.logger.info("runtime.starting", dry_run=dry_run)
+        if not dry_run:
+            device = self.android.select_device()
+            self.android.verify_connection()
+            self.logger.info("runtime.device.ready", serial=device.serial)
+        self._started = True
+        self.logger.info("runtime.started", dry_run=dry_run)
+
+    def shutdown(self) -> None:
+        """Complete the lifecycle safely; repeated shutdown is harmless."""
+        if not self._started:
+            return
+        self._started = False
+        self.logger.info("runtime.stopped")
+
+
+def build_runtime(
+    settings: Settings,
+    *,
+    logger: StructuredLogger | None = None,
+    android_factory: AndroidFactory = AdbClient,
+    level_factory: LevelFactory = JsonLevelRepository.from_package,
+) -> ApplicationRuntime:
+    """Wire all production components without contacting a device at import time."""
+    runtime_logger = logger or configure_logging(level=settings.log_level)
+    android = android_factory(settings, runtime_logger)
+    levels = level_factory()
+    planner = SwipePathPlanner()
+    decisions = DecisionEngine()
+    return ApplicationRuntime(
+        settings=settings,
+        logger=runtime_logger,
+        android=android,
+        levels=levels,
+        planner=planner,
+        decisions=decisions,
+        game_loop=GameLoop(android, levels, planner, decisions),
+        advertisements=AdvertisementPolicy(),
+        recovery=RecoveryStrategy(RetryPolicy(), TimeoutPolicy()),
+    )
