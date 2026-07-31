@@ -13,11 +13,20 @@ from word_madness_bot.application.ports.android import AndroidPort
 from word_madness_bot.bootstrap import ApplicationRuntime, build_runtime
 from word_madness_bot.config.logging import StructuredLogger, configure_logging
 from word_madness_bot.config.settings import Settings
-from word_madness_bot.domain.errors import RuntimeNavigationError, ScreenshotError
+from word_madness_bot.domain.errors import (
+    RuntimeNavigationError,
+    ScreenshotError,
+    WheelGeometryDetectionError,
+)
 from word_madness_bot.domain.geometry import PixelPoint, PixelRect, ScreenSize
 from word_madness_bot.domain.models import DeviceDescriptor, DeviceState, ScreenCapture
 from word_madness_bot.infrastructure.levels.json_repository import JsonLevelRepository
 from word_madness_bot.vision.screen_classifier import ScreenClassification, ScreenType
+from word_madness_bot.vision.wheel_geometry import (
+    LetterPosition,
+    LetterWheelGeometry,
+    WheelGeometryDetector,
+)
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + struct.pack(">II", 1080, 2400)
 
@@ -46,6 +55,29 @@ class FakeAndroid:
         self.taps.append(point)
 
 
+class FakeWheelDetector:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls = 0
+
+    def detect(self, capture: ScreenCapture) -> LetterWheelGeometry:
+        self.calls += 1
+        if self.fail:
+            raise WheelGeometryDetectionError("wheel missing")
+        return LetterWheelGeometry(
+            center=PixelPoint(540, 1800),
+            radius=300,
+            letters=(
+                LetterPosition(0, PixelPoint(540, 1550)),
+                LetterPosition(1, PixelPoint(760, 1900)),
+                LetterPosition(2, PixelPoint(320, 1900)),
+            ),
+        )
+
+    def annotate(self, capture: ScreenCapture, geometry: LetterWheelGeometry) -> bytes:
+        return PNG
+
+
 class FakeClassifier:
     def __init__(self, *results: ScreenClassification) -> None:
         default = ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99)
@@ -65,6 +97,7 @@ def _build(
     logger: StructuredLogger | None = None,
     clock: Callable[[], float] = lambda: 1.0,
     sleeper: Callable[[float], None] | None = None,
+    wheel_detector: WheelGeometryDetector | None = None,
 ) -> ApplicationRuntime:
     return build_runtime(
         Settings(debug_directory=directory),
@@ -72,6 +105,7 @@ def _build(
         android_factory=lambda settings, supplied_logger: cast(AndroidPort, android),
         level_factory=lambda: JsonLevelRepository.from_json('{"levels": []}'),
         screen_classifier=classifier,
+        wheel_detector=wheel_detector or FakeWheelDetector(),
         clock=clock,
         sleeper=(lambda _: None) if sleeper is None else sleeper,
     )
@@ -103,6 +137,13 @@ def test_start_captures_classifies_and_logs_level_entry(tmp_path: Path) -> None:
     assert '"detected_screen": "level_screen"' in output
     assert '"template_confidence": 0.97' in output
     assert '"event": "runtime.level.entered"' in output
+    assert '"event": "runtime.wheel.detected"' in output
+    assert '"center_x": 540' in output
+    assert '"center_y": 1800' in output
+    assert '"radius": 300' in output
+    assert '"number_of_letters": 3' in output
+    assert (tmp_path / "letter-wheel-annotated.png").exists()
+    assert (tmp_path / "letter-wheel-geometry.json").exists()
 
 
 def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
@@ -136,6 +177,13 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     assert '"button_left": 200' in output
     assert '"event": "runtime.start_level.tap"' in output
     assert '"event": "runtime.level.entered"' in output
+    assert '"event": "runtime.wheel.detected"' in output
+    assert '"center_x": 540' in output
+    assert '"center_y": 1800' in output
+    assert '"radius": 300' in output
+    assert '"number_of_letters": 3' in output
+    assert (tmp_path / "letter-wheel-annotated.png").exists()
+    assert (tmp_path / "letter-wheel-geometry.json").exists()
 
 
 def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
@@ -204,6 +252,22 @@ def test_capture_failure_is_logged_and_raised(tmp_path: Path) -> None:
     with pytest.raises(ScreenshotError):
         runtime.start()
     assert '"event": "runtime.screenshot.failed"' in stream.getvalue()
+
+
+def test_wheel_detection_failure_logs_and_raises(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    runtime = _build(
+        FakeAndroid(),
+        FakeClassifier(ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99)),
+        tmp_path,
+        logger=configure_logging(name="test.wheel.failure", stream=stream),
+        wheel_detector=FakeWheelDetector(fail=True),
+    )
+    with pytest.raises(WheelGeometryDetectionError, match="wheel missing"):
+        runtime.start()
+    output = stream.getvalue()
+    assert '"event": "runtime.wheel.detection_failed"' in output
+    assert '"error": "wheel missing"' in output
 
 
 def test_dry_run_has_no_device_screenshot_or_classification_io(tmp_path: Path) -> None:

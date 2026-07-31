@@ -71,6 +71,10 @@ class VisionError(PortError):
     """Base exception for production image-analysis failures."""
 
 
+class WheelGeometryDetectionError(VisionError):
+    """Raised when the runtime cannot model the visible letter wheel."""
+
+
 class ImageDecodeError(VisionError):
     """Raised when image bytes or files cannot be decoded."""
 

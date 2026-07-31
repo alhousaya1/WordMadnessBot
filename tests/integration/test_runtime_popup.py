@@ -55,11 +55,12 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     fixtures = Path(__file__).parents[1] / "fixtures" / "images"
     popup = fixtures / "daily_dash_popup.png"
     home = fixtures / "home_screen.png"
+    level = fixtures / "level_screen.png"
     android = Android(
         (
             ScreenCapture(popup.read_bytes(), ScreenSize(1440, 3120)),
             ScreenCapture(home.read_bytes(), ScreenSize(1440, 3120)),
-            _capture(("level_screen.png", 50, 50)),
+            ScreenCapture(level.read_bytes(), ScreenSize(1440, 3120)),
         )
     )
     runtime = build_runtime(
@@ -75,3 +76,5 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     assert (tmp_path / "screenshot-1.png").exists()
     assert (tmp_path / "screenshot-2.png").exists()
     assert (tmp_path / "screenshot-3.png").exists()
+    assert (tmp_path / "letter-wheel-annotated.png").exists()
+    assert (tmp_path / "letter-wheel-geometry.json").exists()
