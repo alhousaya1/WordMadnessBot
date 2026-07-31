@@ -109,3 +109,11 @@ class WorkflowTimeoutError(WorkflowError):
 
 class WorkflowCancelledError(WorkflowError):
     """Raised when workflow cancellation is requested."""
+
+
+class RecoveryExhaustedError(WorkflowError):
+    """Raised after all bounded recovery attempts fail."""
+
+    def __init__(self, attempts: int) -> None:
+        self.attempts = attempts
+        super().__init__(f"Recovery exhausted after {attempts} attempts")

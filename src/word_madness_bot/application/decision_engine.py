@@ -15,7 +15,7 @@ class Action(StrEnum):
     START_LEVEL = "start_level"
     PLAY_LEVEL = "play_level"
     ADVANCE = "advance"
-    DEFER_ADVERTISEMENT = "defer_advertisement"
+    HANDLE_ADVERTISEMENT = "handle_advertisement"
     WAIT = "wait"
 
 
@@ -39,7 +39,7 @@ class DecisionEngine:
             GameState.PLAYING: Decision(Action.PLAY_LEVEL, "level is active"),
             GameState.VICTORY: Decision(Action.ADVANCE, "victory is confirmed"),
             GameState.ADVERTISEMENT: Decision(
-                Action.DEFER_ADVERTISEMENT, "advertisement handling is Milestone 9"
+                Action.HANDLE_ADVERTISEMENT, "advertisement requires bounded dismissal"
             ),
             GameState.UNKNOWN: Decision(Action.WAIT, "state is unknown"),
         }
