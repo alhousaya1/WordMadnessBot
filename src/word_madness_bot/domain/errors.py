@@ -65,3 +65,15 @@ class DeviceConnectionError(AdbError):
 
 class ScreenshotError(AdbError):
     """Raised when screenshot acquisition or validation fails."""
+
+
+class VisionError(PortError):
+    """Base exception for production image-analysis failures."""
+
+
+class ImageDecodeError(VisionError):
+    """Raised when image bytes or files cannot be decoded."""
+
+
+class OcrError(VisionError):
+    """Raised when an OCR backend fails or returns invalid output."""

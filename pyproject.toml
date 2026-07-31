@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
 authors = [{ name = "Word Madness Bot contributors" }]
-dependencies = []
+dependencies = ["Pillow>=11.0"]
 
 [project.optional-dependencies]
 dev = [
