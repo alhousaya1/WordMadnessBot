@@ -46,12 +46,13 @@ def test_packaged_levels_and_templates_are_present() -> None:
     assert levels.is_file()
     assert templates.is_file()
     packaged_levels = JsonLevelRepository.from_package().all_levels()
-    assert len(packaged_levels) == 1
-    assert packaged_levels[0].number == 90
-    assert packaged_levels[0].words == (
+    assert len(packaged_levels) == 1010
+    assert packaged_levels[0].number == 1
+    assert packaged_levels[89].number == 90
+    assert packaged_levels[89].words == (
         "DON", "DUN", "DUO", "FUN", "NOD", "FOND", "FUND", "FOUND"
     )
-
+    assert packaged_levels[-1].number == 1010
 
 def test_fake_backed_level_and_ad_workflow() -> None:
     android = FakeAndroid()

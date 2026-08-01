@@ -44,10 +44,15 @@ def test_missing_level_is_typed() -> None:
         JsonLevelRepository.from_json('{"levels":[]}').get_level(99)
 
 
-def test_packaged_repository_loads() -> None:
+def test_packaged_repository_loads_every_scraped_level() -> None:
     levels = JsonLevelRepository.from_package().all_levels()
-    assert len(levels) == 1
-    assert levels[0].number == 90
-    assert levels[0].words == (
-        "DON", "DUN", "DUO", "FUN", "NOD", "FOND", "FUND", "FOUND"
+    assert len(levels) == 1010
+    assert levels[0] == Level(1, ("IF", "FIT"))
+    assert levels[89] == Level(
+        90,
+        ("DON", "DUN", "DUO", "FUN", "NOD", "FOND", "FUND", "FOUND"),
+    )
+    assert levels[-1] == Level(
+        1010,
+        ("CAN", "DIG", "DIN", "GIN", "INN", "NAG", "GAIN"),
     )
