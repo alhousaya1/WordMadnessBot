@@ -65,6 +65,10 @@ class CompletionOverlayDetector:
         image = _decode_color(capture)
         return _has_intelligent_heading(image) or _has_yellow_level_button(image)
 
+    def completion_home_button(self, capture: ScreenCapture) -> PixelRect | None:
+        """Return the actual yellow Level button rectangle when it is visible."""
+        return _find_yellow_level_button(_decode_color(capture))
+
     def settings_visible(self, capture: ScreenCapture) -> bool:
         image = _decode_color(capture)
         if _has_yellow_level_button(image):
@@ -146,10 +150,16 @@ def _has_intelligent_heading(image: Any) -> bool:
 
 
 def _has_yellow_level_button(image: Any) -> bool:
+    return _find_yellow_level_button(image) is not None
+
+
+def _find_yellow_level_button(image: Any) -> PixelRect | None:
     height, width = image.shape[:2]
+    crop_left = round(width * 0.15)
+    crop_top = round(height * 0.52)
     region = image[
-        round(height * 0.52) : round(height * 0.78),
-        round(width * 0.15) : round(width * 0.85),
+        crop_top : round(height * 0.78),
+        crop_left : round(width * 0.85),
     ]
     hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(
@@ -158,8 +168,9 @@ def _has_yellow_level_button(image: Any) -> bool:
         np.array((42, 255, 255), dtype=np.uint8),
     )
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates: list[tuple[float, PixelRect]] = []
     for contour in contours:
-        _, _, candidate_width, candidate_height = cv2.boundingRect(contour)
+        left, top, candidate_width, candidate_height = cv2.boundingRect(contour)
         if candidate_height == 0:
             continue
         fill_ratio = cv2.contourArea(contour) / (candidate_width * candidate_height)
@@ -169,8 +180,20 @@ def _has_yellow_level_button(image: Any) -> bool:
             and candidate_width / candidate_height >= 2.0
             and fill_ratio >= 0.55
         ):
-            return True
-    return False
+            candidates.append(
+                (
+                    cv2.contourArea(contour),
+                    PixelRect(
+                        crop_left + left,
+                        crop_top + top,
+                        candidate_width,
+                        candidate_height,
+                    ),
+                )
+            )
+    if not candidates:
+        return None
+    return max(candidates, key=lambda candidate: candidate[0])[1]
 
 
 def _has_back_arrow(region: Any) -> bool:

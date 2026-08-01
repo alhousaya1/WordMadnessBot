@@ -31,14 +31,19 @@ class Overlays:
         tap_to_continue: bool = False,
         daily_celebration: bool = False,
         settings: bool = False,
+        button: PixelRect | None = None,
     ) -> None:
         self.completion_home = completion_home
         self.tap_to_continue = tap_to_continue
         self.daily_celebration = daily_celebration
         self.settings = settings
+        self.button = button
 
     def completion_home_visible(self, capture: ScreenCapture) -> bool:
         return self.completion_home
+
+    def completion_home_button(self, capture: ScreenCapture) -> PixelRect | None:
+        return self.button
 
     def tap_to_continue_visible(self, capture: ScreenCapture) -> bool:
         return self.tap_to_continue
@@ -128,3 +133,16 @@ def test_dispatches_generic_x_popup_to_its_center() -> None:
 
     assert result.state is RuntimeScreenState.GENERIC_X_POPUP
     assert result.action_point == PixelPoint(320, 40)
+
+
+def test_completion_home_uses_detected_button_center() -> None:
+    button = PixelRect(70, 430, 260, 90)
+    result = RuntimeScreenDispatcher(
+        Classifier(ScreenType.UNKNOWN).classify,
+        Overlays(completion_home=True, button=button),
+        Popup(),
+    ).dispatch(CAPTURE)
+
+    assert result.state is RuntimeScreenState.COMPLETION_HOME
+    assert result.action_point == PixelPoint(200, 475)
+    assert result.action_region == button
