@@ -35,9 +35,14 @@ def result(stdout: str | bytes = "", stderr: str | bytes = "", code: int = 0) ->
     return cast(Any, subprocess.CompletedProcess([], code, stdout, stderr))
 
 
-def client(runner: Callable[..., Any], *, retries: int = 0) -> AdbClient:
+def client(
+    runner: Callable[..., Any],
+    *,
+    retries: int = 0,
+    debug_directory: Path = Path("debug"),
+) -> AdbClient:
     return AdbClient(
-        Settings(adb_retries=retries),
+        Settings(adb_retries=retries, debug_directory=debug_directory),
         configure_logging(stream=io.StringIO()),
         runner=runner,
         sleeper=lambda _: None,
@@ -130,7 +135,7 @@ def test_empty_or_corrupt_screenshot_is_rejected() -> None:
         adapter.capture_screenshot()
 
 
-def test_input_commands_are_constructed_and_never_retried() -> None:
+def test_input_commands_are_constructed_and_never_retried(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     def runner(command: list[str], **kwargs: object) -> Any:
@@ -139,7 +144,7 @@ def test_input_commands_are_constructed_and_never_retried() -> None:
             return result("List of devices attached\na device\n")
         return result("", "failure", 1)
 
-    adapter = client(runner, retries=3)
+    adapter = client(runner, retries=3, debug_directory=tmp_path)
     adapter.select_device()
     actions = [
         lambda: adapter.tap(PixelPoint(1, 2)),
@@ -188,7 +193,7 @@ def test_missing_executable_is_typed_without_retry() -> None:
     assert calls == 1
 
 
-def test_swipe_emits_one_continuous_multi_point_motion_gesture() -> None:
+def test_swipe_emits_one_continuous_multi_point_motion_gesture(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     script = ""
 
@@ -201,7 +206,7 @@ def test_swipe_emits_one_continuous_multi_point_motion_gesture() -> None:
             script = Path(command[-2]).read_text(encoding="utf-8")
         return result()
 
-    adapter = client(runner)
+    adapter = client(runner, debug_directory=tmp_path)
     adapter.select_device()
     adapter.swipe(
         SwipePath(
@@ -220,5 +225,7 @@ def test_swipe_emits_one_continuous_multi_point_motion_gesture() -> None:
     assert "DispatchPointer(1,1,0,10,20,1.0" in script
     assert "UserWait(90)" in script
     assert "DispatchPointer(1,91,2,30,40,1.0" in script
-    assert "DispatchPointer(1,181,1,50,60,0.0" in script
+    assert "DispatchPointer(1,181,2,50,60,1.0" in script
+    assert script.index("1,181,2,50,60") < script.index("1,181,1,50,60")
+    assert (tmp_path / "swipe_script.txt").read_text(encoding="utf-8") == script
     assert "input motionevent" not in script

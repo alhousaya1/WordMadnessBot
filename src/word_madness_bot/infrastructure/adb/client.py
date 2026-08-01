@@ -111,6 +111,12 @@ class AdbClient(AndroidPort):
             for index in range(len(path.points))
         )
         script = _build_monkey_swipe_script(path, timestamps)
+        debug_script_path = self._settings.debug_directory / "swipe_script.txt"
+        debug_script_path.parent.mkdir(parents=True, exist_ok=True)
+        debug_script_path.write_text(script, encoding="utf-8", newline="\n")
+        self._logger.info(
+            "adb.swipe.script.saved", output_filename=str(debug_script_path)
+        )
         remote_path = "/data/local/tmp/word_madness_swipe.txt"
         backend_command = ("shell", "monkey", "-f", remote_path, "1")
         local_path: Path | None = None
@@ -247,13 +253,18 @@ def _build_monkey_swipe_script(
     for index, point in enumerate(path.points):
         if index:
             events.append(f"UserWait({timestamps[index] - timestamps[index - 1]})")
-        action = 0 if index == 0 else 1 if index == len(path.points) - 1 else 2
-        pressure = 0.0 if action == 1 else 1.0
+        action = 0 if index == 0 else 2
         events.append(
             "DispatchPointer("
             f"{down_time},{timestamps[index] + down_time},{action},"
-            f"{point.x},{point.y},{pressure},1.0,0,1.0,1.0,0,0)"
+            f"{point.x},{point.y},1.0,1.0,0,1.0,1.0,0,0)"
         )
+    final_point = path.points[-1]
+    events.append(
+        "DispatchPointer("
+        f"{down_time},{timestamps[-1] + down_time},1,"
+        f"{final_point.x},{final_point.y},0.0,1.0,0,1.0,1.0,0,0)"
+    )
     return (
         "type= raw events\n"
         f"count= {len(events)}\n"
