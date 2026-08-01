@@ -8,7 +8,7 @@ from word_madness_bot.application.level_executor import LevelExecutor
 from word_madness_bot.application.solution_planning import LevelSolutionPlan, PlannedSolution
 from word_madness_bot.application.word_execution import AcceptanceResult, WordExecutionResult
 from word_madness_bot.domain.errors import WordExecutionError
-from word_madness_bot.domain.geometry import PixelPoint, ScreenSize
+from word_madness_bot.domain.geometry import PixelPoint, PixelRect, ScreenSize
 from word_madness_bot.domain.models import ScreenCapture
 from word_madness_bot.vision.screen_classifier import ScreenClassification, ScreenType
 
@@ -29,10 +29,14 @@ def _plan() -> LevelSolutionPlan:
 class Android:
     def __init__(self) -> None:
         self.captures = 0
+        self.taps: list[PixelPoint] = []
 
     def capture_screenshot(self) -> ScreenCapture:
         self.captures += 1
         return CAPTURE
+
+    def tap(self, point: PixelPoint) -> None:
+        self.taps.append(point)
 
     def __getattr__(self, name: str) -> object:
         return lambda *args, **kwargs: None
@@ -103,3 +107,29 @@ def test_stops_immediately_when_a_word_is_rejected(tmp_path: Path) -> None:
 
     assert words.words == ["AB", "CAB"]
     assert android.captures == 1
+
+class PopupDetector:
+    def __init__(self, *results: PixelRect | None) -> None:
+        self.results = iter(results)
+
+    def detect(self, capture: ScreenCapture) -> PixelRect | None:
+        return next(self.results)
+
+
+def test_dismisses_reappearing_popup_until_it_is_gone(tmp_path: Path) -> None:
+    android = Android()
+    words = WordExecutor((True, True))
+    sleeps: list[float] = []
+    popup = PixelRect(300, 20, 40, 40)
+    executor = LevelExecutor(
+        android,  # type: ignore[arg-type]
+        words,  # type: ignore[arg-type]
+        Classifier(ScreenType.HOME_SCREEN),
+        PopupDetector(popup, popup, None),
+        sleeper=sleeps.append,
+    )
+
+    executor.execute(_plan(), CAPTURE, tmp_path)
+
+    assert android.taps == [PixelPoint(320, 40), PixelPoint(320, 40)]
+    assert sleeps == [2.0, 2.0, 2.0]

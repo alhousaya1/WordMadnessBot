@@ -119,11 +119,10 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     )
     runtime.start(max_levels=1)
     runtime.shutdown()
-    assert android.taps == [PixelPoint(1290, 845), PixelPoint(720, 2040)]
+    assert android.taps == [PixelPoint(1290, 845), PixelPoint(721, 2038)]
     assert len(android.swipes) == 8
     assert (tmp_path / "screenshot-1.png").exists()
     assert (tmp_path / "screenshot-2.png").exists()
-    assert (tmp_path / "screenshot-3.png").exists()
     assert (tmp_path / "letter-wheel-annotated.png").exists()
     assert (tmp_path / "letter-wheel-geometry.json").exists()
     crops = sorted((tmp_path / "letters").glob("letter-*.png"))

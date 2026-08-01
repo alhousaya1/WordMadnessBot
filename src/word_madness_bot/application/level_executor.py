@@ -9,12 +9,14 @@ from pathlib import Path
 from typing import Protocol
 
 from word_madness_bot.application.ports.android import AndroidPort
+from word_madness_bot.application.runtime_controls import PopupCloseButtonPort
 from word_madness_bot.application.solution_planning import LevelSolutionPlan
 from word_madness_bot.application.word_execution import (
     SingleWordExecutor,
     WordExecutionResult,
 )
 from word_madness_bot.domain.errors import WordExecutionError, WordNotAcceptedError
+from word_madness_bot.domain.geometry import PixelPoint
 from word_madness_bot.domain.models import ScreenCapture
 from word_madness_bot.vision.screen_classifier import ScreenClassification, ScreenType
 
@@ -43,20 +45,26 @@ class LevelExecutor:
         android: AndroidPort,
         word_executor: SingleWordExecutor,
         screen_classifier: LevelScreenClassifier,
+        popup_close_detector: PopupCloseButtonPort | None = None,
         *,
         completion_animation_wait_seconds: float = 2.0,
         home_poll_wait_seconds: float = 0.5,
+        popup_dismiss_wait_seconds: float = 2.0,
         sleeper: Sleeper = time.sleep,
     ) -> None:
         if completion_animation_wait_seconds < 0:
             raise ValueError("completion_animation_wait_seconds cannot be negative")
         if home_poll_wait_seconds < 0:
             raise ValueError("home_poll_wait_seconds cannot be negative")
+        if popup_dismiss_wait_seconds < 0:
+            raise ValueError("popup_dismiss_wait_seconds cannot be negative")
         self.android = android
         self.word_executor = word_executor
         self.screen_classifier = screen_classifier
+        self.popup_close_detector = popup_close_detector
         self.completion_animation_wait_seconds = completion_animation_wait_seconds
         self.home_poll_wait_seconds = home_poll_wait_seconds
+        self.popup_dismiss_wait_seconds = popup_dismiss_wait_seconds
         self.sleeper = sleeper
 
     def execute(
@@ -91,6 +99,21 @@ class LevelExecutor:
 
         self.sleeper(self.completion_animation_wait_seconds)
         while True:
+            close_button = (
+                None
+                if self.popup_close_detector is None
+                else self.popup_close_detector.detect(current)
+            )
+            if close_button is not None:
+                self.android.tap(
+                    PixelPoint(
+                        close_button.left + close_button.width // 2,
+                        close_button.top + close_button.height // 2,
+                    )
+                )
+                self.sleeper(self.popup_dismiss_wait_seconds)
+                current = self.android.capture_screenshot()
+                continue
             classification = self.screen_classifier.classify(current)
             if classification.screen is ScreenType.HOME_SCREEN:
                 return LevelExecutionResult(tuple(results), current)
