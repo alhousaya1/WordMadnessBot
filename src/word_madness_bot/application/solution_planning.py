@@ -85,7 +85,9 @@ class LevelSolutionPlanner:
         for word in level.words:
             indices = _map_indices(letters, word)
             try:
-                path = self.path_planner.plan(letters, word, screen)
+                path = self.path_planner.plan(
+                    letters, word, screen, interpolate=False
+                )
             except SwipePlanningError as error:
                 raise SolutionPlanningError(str(error)) from error
             solutions.append(PlannedSolution(word, indices, path.points, path.duration_ms))

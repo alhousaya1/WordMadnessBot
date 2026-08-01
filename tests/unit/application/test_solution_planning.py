@@ -53,6 +53,9 @@ def test_plans_indices_and_interpolated_coordinates_for_every_word(tmp_path: Pat
     assert plan.solutions[1].indices == (1, 0, 2, 3)
     assert plan.solutions[0].coordinates[0] == PixelPoint(500, 200)
     assert plan.solutions[0].coordinates[-1] == PixelPoint(800, 500)
+    assert len(plan.solutions[0].coordinates) == len(plan.solutions[0].word)
+    assert plan.solutions[0].duration_ms == 120
+    assert plan.solutions[1].duration_ms == 180
 
 
 def test_rejects_repository_word_that_cannot_be_formed(tmp_path: Path) -> None:

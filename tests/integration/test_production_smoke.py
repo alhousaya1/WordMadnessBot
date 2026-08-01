@@ -10,7 +10,7 @@ from word_madness_bot.application.game_loop import GameLoop
 from word_madness_bot.application.recovery import RecoveryStrategy, RetryPolicy, TimeoutPolicy
 from word_madness_bot.cli import main
 from word_madness_bot.domain.geometry import NormalizedPoint, ScreenSize
-from word_madness_bot.domain.models import LetterPosition
+from word_madness_bot.domain.models import LetterPosition, SwipeExecutionReceipt
 from word_madness_bot.gameplay.ads import (
     AdvertisementDetection,
     AdvertisementPolicy,
@@ -25,8 +25,9 @@ class FakeAndroid:
         self.swipes: list[Any] = []
         self.taps: list[Any] = []
 
-    def swipe(self, path: Any) -> None:
+    def swipe(self, path: Any) -> SwipeExecutionReceipt:
         self.swipes.append(path)
+        return SwipeExecutionReceipt(("fake",), (0, path.duration_ms))
 
     def tap(self, point: Any) -> None:
         self.taps.append(point)

@@ -8,7 +8,12 @@ from word_madness_bot.application.decision_engine import Action
 from word_madness_bot.application.game_loop import GameLoop
 from word_madness_bot.domain.errors import WorkflowCancelledError, WorkflowTimeoutError
 from word_madness_bot.domain.geometry import NormalizedPoint, ScreenSize
-from word_madness_bot.domain.models import LetterPosition, Level, StateObservation
+from word_madness_bot.domain.models import (
+    LetterPosition,
+    Level,
+    StateObservation,
+    SwipeExecutionReceipt,
+)
 from word_madness_bot.domain.states import GameState
 from word_madness_bot.gameplay.swipe_generator import SwipePathPlanner
 
@@ -17,8 +22,9 @@ class Android:
     def __init__(self) -> None:
         self.paths: list[Any] = []
 
-    def swipe(self, path: Any) -> None:
+    def swipe(self, path: Any) -> SwipeExecutionReceipt:
         self.paths.append(path)
+        return SwipeExecutionReceipt(("fake",), (0, path.duration_ms))
 
     def __getattr__(self, name: str) -> Any:
         return lambda *args, **kwargs: None

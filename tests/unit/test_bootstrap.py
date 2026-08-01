@@ -26,6 +26,7 @@ from word_madness_bot.domain.models import (
     DeviceDescriptor,
     DeviceState,
     ScreenCapture,
+    SwipeExecutionReceipt,
     SwipePath,
 )
 from word_madness_bot.infrastructure.levels.json_repository import JsonLevelRepository
@@ -68,8 +69,9 @@ class FakeAndroid:
     def tap(self, point: PixelPoint) -> None:
         self.taps.append(point)
 
-    def swipe(self, path: SwipePath) -> None:
+    def swipe(self, path: SwipePath) -> SwipeExecutionReceipt:
         self.swipes.append(path)
+        return SwipeExecutionReceipt(("fake",), (0, path.duration_ms))
 
 
 class FakeWheelDetector:

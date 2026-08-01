@@ -24,6 +24,7 @@ from word_madness_bot.domain.models import (
     DeviceState,
     DisplayMetrics,
     ScreenCapture,
+    SwipeExecutionReceipt,
     SwipePath,
 )
 from word_madness_bot.infrastructure.adb.screenshot import parse_png_size
@@ -102,30 +103,28 @@ class AdbClient(AndroidPort):
     def tap(self, point: PixelPoint) -> None:
         self._run_text(["shell", "input", "tap", str(point.x), str(point.y)], retry=False)
 
-    def swipe(self, path: SwipePath) -> None:
-        interval = path.duration_ms / 1000 / (len(path.points) - 1)
+    def swipe(self, path: SwipePath) -> SwipeExecutionReceipt:
+        timestamps = tuple(
+            round(index * path.duration_ms / (len(path.points) - 1))
+            for index in range(len(path.points))
+        )
         first = path.points[0]
-        self._run_text(
-            ["shell", "input", "motionevent", "DOWN", str(first.x), str(first.y)],
-            retry=False,
-        )
-        for point in path.points[1:-1]:
-            self._sleeper(interval)
-            self._run_text(
-                ["shell", "input", "motionevent", "MOVE", str(point.x), str(point.y)],
-                retry=False,
-            )
-        self._sleeper(interval)
-        last = path.points[-1]
-        self._run_text(
-            ["shell", "input", "motionevent", "UP", str(last.x), str(last.y)],
-            retry=False,
-        )
+        commands = [f"input motionevent DOWN {first.x} {first.y}"]
+        for index, point in enumerate(path.points[1:], start=1):
+            delay_ms = timestamps[index] - timestamps[index - 1]
+            commands.append(f"sleep {delay_ms / 1000:.3f}")
+            action = "UP" if index == len(path.points) - 1 else "MOVE"
+            commands.append(f"input motionevent {action} {point.x} {point.y}")
+        backend_command = ("shell", "sh", "-c", "; ".join(commands))
+        self._run_text(list(backend_command), retry=False)
         self._logger.info(
             "adb.swipe.executed",
             duration_ms=path.duration_ms,
             point_count=len(path.points),
+            backend_command=list(backend_command),
+            timestamps_ms=list(timestamps),
         )
+        return SwipeExecutionReceipt(backend_command, timestamps)
 
     def press_back(self) -> None:
         self._run_text(["shell", "input", "keyevent", "BACK"], retry=False)
