@@ -14,6 +14,8 @@ from word_madness_bot.application.ports.android import AndroidPort
 from word_madness_bot.application.ports.levels import LevelRepository
 from word_madness_bot.application.recovery import RecoveryStrategy, RetryPolicy, TimeoutPolicy
 from word_madness_bot.application.runtime_controls import (
+    CompletionOverlayDetector,
+    CompletionOverlayPort,
     PopupCloseButtonPort,
     UpperRightPopupCloseDetector,
 )
@@ -414,6 +416,7 @@ def build_runtime(
     level_number_recognizer: LevelNumberRecognitionPort | None = None,
     word_acceptance_verifier: WordAcceptanceVerifier | None = None,
     popup_close_button_detector: PopupCloseButtonPort | None = None,
+    completion_overlay_detector: CompletionOverlayPort | None = None,
     clock: Clock = time.monotonic,
     sleeper: Sleeper = time.sleep,
 ) -> ApplicationRuntime:
@@ -450,7 +453,9 @@ def build_runtime(
             single_word_executor,
             classifier,
             popup_close_button_detector or UpperRightPopupCloseDetector(),
+            completion_overlay_detector or CompletionOverlayDetector(),
             swipe_duration_ms=settings.swipe_duration_ms,
+            clock=clock,
             sleeper=sleeper,
         ),
         clock=clock,
