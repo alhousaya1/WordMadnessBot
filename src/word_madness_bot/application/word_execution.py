@@ -87,6 +87,7 @@ class ImageDifferenceWordAcceptanceVerifier:
             float(np.mean(persistent_difference)),
         )
 
+
 @dataclass(frozen=True, slots=True)
 class WordExecutionResult:
     """Complete evidence for exactly one attempted solution word."""
@@ -98,6 +99,7 @@ class WordExecutionResult:
     elapsed_seconds: float
     timestamps_ms: tuple[int, ...]
     backend_command: tuple[str, ...]
+    after_capture: ScreenCapture
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -123,19 +125,15 @@ class SingleWordExecutor:
         android: AndroidPort,
         verifier: WordAcceptanceVerifier,
         *,
-        animation_wait_seconds: float = 1.5,
-        confirmation_wait_seconds: float = 0.5,
+        acceptance_wait_seconds: float = 1.2,
         sleeper: Sleeper = time.sleep,
         clock: Clock = time.monotonic,
     ) -> None:
-        if animation_wait_seconds < 0:
-            raise ValueError("animation_wait_seconds cannot be negative")
-        if confirmation_wait_seconds < 0:
-            raise ValueError("confirmation_wait_seconds cannot be negative")
+        if acceptance_wait_seconds < 0:
+            raise ValueError("acceptance_wait_seconds cannot be negative")
         self.android = android
         self.verifier = verifier
-        self.animation_wait_seconds = animation_wait_seconds
-        self.confirmation_wait_seconds = confirmation_wait_seconds
+        self.acceptance_wait_seconds = acceptance_wait_seconds
         self.sleeper = sleeper
         self.clock = clock
 
@@ -156,25 +154,28 @@ class SingleWordExecutor:
         swipe_path = debug_directory / "swipe.json"
         try:
             save_screenshot(before.data, before_path)
-            receipt = self.android.swipe(
-                SwipePath(first.coordinates, first.duration_ms)
-            )
-            self.sleeper(self.animation_wait_seconds)
-            after = self.android.capture_screenshot()
-            save_screenshot(after.data, after_path)
-            self.sleeper(self.confirmation_wait_seconds)
-            confirmation = self.android.capture_screenshot()
-            save_screenshot(confirmation.data, confirmation_path)
-            acceptance = self.verifier.verify(before, after, confirmation)
-            result = WordExecutionResult(
-                first.word,
-                first.duration_ms,
-                first.coordinates,
-                acceptance,
-                self.clock() - started,
-                receipt.timestamps_ms,
-                receipt.backend_command,
-            )
+            result: WordExecutionResult | None = None
+            for _ in range(2):
+                receipt = self.android.swipe(SwipePath(first.coordinates, first.duration_ms))
+                self.sleeper(self.acceptance_wait_seconds)
+                after = self.android.capture_screenshot()
+                save_screenshot(after.data, after_path)
+                save_screenshot(after.data, confirmation_path)
+                acceptance = self.verifier.verify(before, after, after)
+                result = WordExecutionResult(
+                    first.word,
+                    first.duration_ms,
+                    first.coordinates,
+                    acceptance,
+                    self.clock() - started,
+                    receipt.timestamps_ms,
+                    receipt.backend_command,
+                    after,
+                )
+                if acceptance.accepted:
+                    break
+            if result is None:
+                raise WordExecutionError("Single-word execution produced no result")
             swipe_path.write_text(
                 json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",

@@ -52,8 +52,8 @@ def _plan() -> LevelSolutionPlan:
 
 
 class Android:
-    def __init__(self, after: ScreenCapture) -> None:
-        self.after = after
+    def __init__(self, after: ScreenCapture | tuple[ScreenCapture, ...]) -> None:
+        self.afters = iter(after if isinstance(after, tuple) else (after,))
         self.swipes: list[SwipePath] = []
         self.captures = 0
 
@@ -63,7 +63,7 @@ class Android:
 
     def capture_screenshot(self) -> ScreenCapture:
         self.captures += 1
-        return self.after
+        return next(self.afters)
 
     def __getattr__(self, name: str) -> object:
         return lambda *args, **kwargs: None
@@ -89,11 +89,9 @@ def test_executor_attempts_only_first_word_and_saves_all_evidence(tmp_path: Path
     result = executor.execute(_plan(), _capture(), tmp_path)
     assert result.word == "AB"
     assert result.acceptance.accepted is True
-    assert android.swipes == [
-        SwipePath((PixelPoint(100, 600), PixelPoint(200, 650)), 250)
-    ]
-    assert android.captures == 2
-    assert sleeps == [1.5, 0.5]
+    assert android.swipes == [SwipePath((PixelPoint(100, 600), PixelPoint(200, 650)), 250)]
+    assert android.captures == 1
+    assert sleeps == [1.2]
     assert (tmp_path / "word_before.png").exists()
     assert (tmp_path / "word_after.png").exists()
     assert (tmp_path / "word_confirmed.png").exists()
@@ -103,6 +101,29 @@ def test_executor_attempts_only_first_word_and_saves_all_evidence(tmp_path: Path
     assert payload["duration_ms"] == 250
     assert payload["timestamps_ms"] == [0, 250]
     assert payload["backend_command"] == ["fake"]
+
+
+def test_executor_retries_once_after_rejection(tmp_path: Path) -> None:
+    before = _capture()
+    android = Android((before, _capture(changed=True)))
+    sleeps: list[float] = []
+    executor = SingleWordExecutor(
+        android,  # type: ignore[arg-type]
+        ImageDifferenceWordAcceptanceVerifier(),
+        sleeper=sleeps.append,
+        clock=iter((1.0, 2.0, 3.0)).__next__,
+    )
+
+    result = executor.execute(_plan(), before, tmp_path)
+
+    expected_path = SwipePath(
+        (PixelPoint(100, 600), PixelPoint(200, 650)),
+        250,
+    )
+    assert result.acceptance.accepted is True
+    assert android.swipes == [expected_path, expected_path]
+    assert android.captures == 2
+    assert sleeps == [1.2, 1.2]
 
 
 def test_verifier_rejects_mismatched_screen_sizes() -> None:

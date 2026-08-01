@@ -65,6 +65,7 @@ class WordExecutor:
             1.0,
             (0, solution.duration_ms),
             ("fake",),
+            CAPTURE,
         )
 
 
@@ -97,7 +98,7 @@ def test_executes_every_word_then_waits_until_home(tmp_path: Path) -> None:
     ]
     assert [word.word for word in result.words] == ["AB", "CAB"]
     assert result.home_capture is CAPTURE
-    assert android.captures == 3
+    assert android.captures == 1
     assert sleeps == [2.0, 0.5]
 
 
@@ -115,6 +116,7 @@ def test_runtime_swipe_duration_is_configurable(tmp_path: Path) -> None:
     executor.execute(_plan(), CAPTURE, tmp_path)
 
     assert words.durations == [750, 750]
+
 
 def test_stops_immediately_when_a_word_is_rejected(tmp_path: Path) -> None:
     android = Android()
@@ -135,7 +137,8 @@ def test_stops_immediately_when_a_word_is_rejected(tmp_path: Path) -> None:
         (PixelPoint(1, 2), PixelPoint(3, 4)),
         (PixelPoint(5, 6),),
     ]
-    assert android.captures == 1
+    assert android.captures == 0
+
 
 class PopupDetector:
     def __init__(self, *results: PixelRect | None) -> None:
