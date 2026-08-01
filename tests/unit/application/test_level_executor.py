@@ -7,7 +7,7 @@ import pytest
 from word_madness_bot.application.level_executor import LevelExecutor
 from word_madness_bot.application.solution_planning import LevelSolutionPlan, PlannedSolution
 from word_madness_bot.application.word_execution import AcceptanceResult, WordExecutionResult
-from word_madness_bot.domain.errors import WordExecutionError
+from word_madness_bot.domain.errors import RuntimeTransitionError, WordExecutionError
 from word_madness_bot.domain.geometry import PixelPoint, PixelRect, ScreenSize
 from word_madness_bot.domain.models import ScreenCapture
 from word_madness_bot.vision.screen_classifier import ScreenClassification, ScreenType
@@ -98,8 +98,8 @@ def test_executes_every_word_then_waits_until_home(tmp_path: Path) -> None:
     ]
     assert [word.word for word in result.words] == ["AB", "CAB"]
     assert result.home_capture is CAPTURE
-    assert android.captures == 1
-    assert sleeps == [2.0, 0.5]
+    assert android.captures == 2
+    assert sleeps == [1.0, 0.5, 0.5]
 
 
 def test_runtime_swipe_duration_is_configurable(tmp_path: Path) -> None:
@@ -164,4 +164,72 @@ def test_dismisses_reappearing_popup_until_it_is_gone(tmp_path: Path) -> None:
     executor.execute(_plan(), CAPTURE, tmp_path)
 
     assert android.taps == [PixelPoint(320, 40), PixelPoint(320, 40)]
-    assert sleeps == [2.0, 2.0, 2.0]
+    assert sleeps == [1.0, 0.5, 0.5, 0.5]
+
+
+class CompletionOverlayDetector:
+    def __init__(
+        self,
+        tap_to_continue: tuple[bool, ...],
+        daily_celebration: tuple[bool, ...],
+    ) -> None:
+        self.tap_to_continue = iter(tap_to_continue)
+        self.daily_celebration = iter(daily_celebration)
+
+    def tap_to_continue_visible(self, capture: ScreenCapture) -> bool:
+        return next(self.tap_to_continue)
+
+    def daily_celebration_visible(self, capture: ScreenCapture) -> bool:
+        return next(self.daily_celebration)
+
+
+def test_recovers_completion_overlays_in_priority_order(tmp_path: Path) -> None:
+    android = Android()
+    sleeps: list[float] = []
+    popup = PixelRect(300, 20, 40, 40)
+    executor = LevelExecutor(
+        android,  # type: ignore[arg-type]
+        WordExecutor((True, True)),  # type: ignore[arg-type]
+        Classifier(ScreenType.HOME_SCREEN),
+        PopupDetector(popup, None),
+        CompletionOverlayDetector(
+            (True, False, False, False),
+            (True, False, False),
+        ),
+        sleeper=sleeps.append,
+    )
+
+    executor.execute(_plan(), CAPTURE, tmp_path)
+
+    assert android.taps == [
+        PixelPoint(200, 400),
+        PixelPoint(20, 56),
+        PixelPoint(320, 40),
+    ]
+    assert android.captures == 4
+    assert sleeps == [1.0, 0.5, 0.5, 0.5, 0.5]
+
+
+def test_raises_when_completion_recovery_exceeds_twenty_seconds(
+    tmp_path: Path,
+) -> None:
+    android = Android()
+    clock = iter((0.0, 0.0, 5.0, 10.0, 15.0, 20.0)).__next__
+    executor = LevelExecutor(
+        android,  # type: ignore[arg-type]
+        WordExecutor((True, True)),  # type: ignore[arg-type]
+        Classifier(
+            ScreenType.LEVEL_SCREEN,
+            ScreenType.LEVEL_SCREEN,
+            ScreenType.LEVEL_SCREEN,
+            ScreenType.LEVEL_SCREEN,
+        ),
+        recovery_timeout_seconds=20.0,
+        clock=clock,
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(RuntimeTransitionError, match="within 20 seconds"):
+        executor.execute(_plan(), CAPTURE, tmp_path)
+
+    assert android.captures == 4

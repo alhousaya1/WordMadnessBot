@@ -51,6 +51,13 @@ class Android:
     def __getattr__(self, name: str) -> Any:
         return lambda *args, **kwargs: None
 
+class CompletionOverlayDetector:
+    def tap_to_continue_visible(self, capture: ScreenCapture) -> bool:
+        return False
+
+    def daily_celebration_visible(self, capture: ScreenCapture) -> bool:
+        return False
+
 class AcceptanceVerifier:
     def verify(
         self, before: ScreenCapture, after: ScreenCapture, confirmation: ScreenCapture
@@ -116,6 +123,7 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
         level_factory=JsonLevelRepository.from_package,
         sleeper=lambda _: None,
         word_acceptance_verifier=AcceptanceVerifier(),
+        completion_overlay_detector=CompletionOverlayDetector(),
     )
     runtime.start(max_levels=1)
     runtime.shutdown()

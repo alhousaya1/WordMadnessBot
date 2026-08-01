@@ -111,6 +111,10 @@ class RuntimeNavigationError(WorkflowError):
     """Raised when bounded runtime screen navigation cannot complete."""
 
 
+class RuntimeTransitionError(WorkflowError):
+    """Raised when a bounded runtime screen transition cannot complete."""
+
+
 class SolutionPlanningError(WorkflowError):
     """Raised when a detected level cannot produce a complete solution plan."""
 

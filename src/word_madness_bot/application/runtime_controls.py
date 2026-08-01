@@ -15,7 +15,69 @@ np: Any = import_module("numpy")
 
 
 class PopupCloseButtonPort(Protocol):
+    """Locate a generic popup close control."""
+
     def detect(self, capture: ScreenCapture) -> PixelRect | None: ...
+
+
+class CompletionOverlayPort(Protocol):
+    """Detect post-level overlays without involving gameplay OCR."""
+
+    def tap_to_continue_visible(self, capture: ScreenCapture) -> bool: ...
+
+    def daily_celebration_visible(self, capture: ScreenCapture) -> bool: ...
+
+
+class CompletionOverlayDetector:
+    """Detect bright post-level controls in their stable normalized regions."""
+
+    def tap_to_continue_visible(self, capture: ScreenCapture) -> bool:
+        gray = cv2.cvtColor(_decode_color(capture), cv2.COLOR_BGR2GRAY)
+        height, width = gray.shape
+        region = gray[
+            round(height * 0.62) : round(height * 0.92),
+            round(width * 0.18) : round(width * 0.82),
+        ]
+        return _has_text_line(region, minimum_components=6)
+
+    def daily_celebration_visible(self, capture: ScreenCapture) -> bool:
+        gray = cv2.cvtColor(_decode_color(capture), cv2.COLOR_BGR2GRAY)
+        height, width = gray.shape
+        arrow_region = gray[
+            round(height * 0.02) : round(height * 0.18),
+            round(width * 0.01) : round(width * 0.16),
+        ]
+        heading_region = gray[
+            round(height * 0.04) : round(height * 0.24),
+            round(width * 0.18) : round(width * 0.82),
+        ]
+        return _has_back_arrow(arrow_region) and _has_text_line(
+            heading_region, minimum_components=8
+        )
+
+
+def _has_text_line(region: Any, *, minimum_components: int) -> bool:
+    _, mask = cv2.threshold(region, 210, 255, cv2.THRESH_BINARY)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    region_height, region_width = region.shape
+    components = 0
+    for left, top, width, height, area in stats[1:count]:
+        del left, top
+        if (
+            area >= 6
+            and height >= max(2, round(region_height * 0.025))
+            and height <= round(region_height * 0.35)
+            and width <= round(region_width * 0.20)
+        ):
+            components += 1
+    return components >= minimum_components
+
+
+def _has_back_arrow(region: Any) -> bool:
+    _, mask = cv2.threshold(region, 210, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    region_area = float(region.shape[0] * region.shape[1])
+    return any(0.002 <= cv2.contourArea(contour) / region_area <= 0.20 for contour in contours)
 
 
 class UpperRightPopupCloseDetector:
@@ -24,9 +86,7 @@ class UpperRightPopupCloseDetector:
     def __init__(self, *, minimum_confidence: float = 0.72) -> None:
         if not 0.0 <= minimum_confidence <= 1.0:
             raise ValueError("minimum_confidence must be between zero and one")
-        resource = files("word_madness_bot.resources.templates").joinpath(
-            "daily_dash_close.png"
-        )
+        resource = files("word_madness_bot.resources.templates").joinpath("daily_dash_close.png")
         template = cv2.imdecode(
             np.frombuffer(resource.read_bytes(), dtype=np.uint8),
             cv2.IMREAD_GRAYSCALE,

@@ -134,6 +134,14 @@ class FakeLevelNumberRecognizer:
         return self.number
 
 
+class FakeCompletionOverlayDetector:
+    def tap_to_continue_visible(self, capture: ScreenCapture) -> bool:
+        return False
+
+    def daily_celebration_visible(self, capture: ScreenCapture) -> bool:
+        return False
+
+
 class FakePopupCloseDetector:
     def detect(self, capture: ScreenCapture) -> PixelRect | None:
         return None
@@ -194,6 +202,7 @@ def _build(
         level_number_recognizer=FakeLevelNumberRecognizer(),
         word_acceptance_verifier=acceptance_verifier or FakeAcceptanceVerifier(),
         popup_close_button_detector=FakePopupCloseDetector(),
+        completion_overlay_detector=FakeCompletionOverlayDetector(),
         clock=clock,
         sleeper=(lambda _: None) if sleeper is None else sleeper,
     )
@@ -224,7 +233,7 @@ def test_start_captures_classifies_and_logs_level_entry(tmp_path: Path) -> None:
     )
     runtime.start(max_levels=1)
     assert (tmp_path / "screenshot-1.png").read_bytes() == PNG
-    assert (android.selected, android.verified, android.captures) == (1, 1, 4)
+    assert (android.selected, android.verified, android.captures) == (1, 1, 5)
     output = stream.getvalue()
     assert '"detected_screen": "level_screen"' in output
     assert '"template_confidence": 0.97' in output
@@ -280,8 +289,8 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     )
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps == [3.0, 10.0, 1.2, 1.2, 2.0]
-    assert android.captures == 4
+    assert sleeps == [3.0, 10.0, 1.2, 1.2, 1.0, 0.5]
+    assert android.captures == 5
     assert classifier.calls == 3
     output = stream.getvalue()
     detected_index = output.index('"event": "runtime.start_level.detected"')
@@ -323,8 +332,8 @@ def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(100, 40), PixelPoint(540, 1569)]
-    assert sleeps == [0.5, 3.0, 10.0, 1.2, 1.2, 2.0]
-    assert android.captures == 5
+    assert sleeps == [0.5, 3.0, 10.0, 1.2, 1.2, 1.0, 0.5]
+    assert android.captures == 6
     assert classifier.calls == 4
 
 
