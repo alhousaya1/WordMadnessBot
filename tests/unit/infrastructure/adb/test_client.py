@@ -135,7 +135,7 @@ def test_empty_or_corrupt_screenshot_is_rejected() -> None:
         adapter.capture_screenshot()
 
 
-def test_input_commands_are_constructed_and_never_retried(tmp_path: Path) -> None:
+def test_adb_input_commands_are_constructed_and_never_retried() -> None:
     calls: list[list[str]] = []
 
     def runner(command: list[str], **kwargs: object) -> Any:
@@ -144,11 +144,10 @@ def test_input_commands_are_constructed_and_never_retried(tmp_path: Path) -> Non
             return result("List of devices attached\na device\n")
         return result("", "failure", 1)
 
-    adapter = client(runner, retries=3, debug_directory=tmp_path)
+    adapter = client(runner, retries=3)
     adapter.select_device()
     actions = [
         lambda: adapter.tap(PixelPoint(1, 2)),
-        lambda: adapter.swipe(SwipePath((PixelPoint(1, 2), PixelPoint(3, 4)), 500)),
         adapter.press_back,
         adapter.press_home,
     ]
@@ -193,80 +192,34 @@ def test_missing_executable_is_typed_without_retry() -> None:
     assert calls == 1
 
 
-class FakeProcess:
-    def __init__(self) -> None:
-        self.terminated = False
+class FakeU2Device:
+    def __init__(self, result: object = True) -> None:
+        self.result = result
+        self.calls: list[tuple[list[tuple[int, int]], float]] = []
 
-    def poll(self) -> None:
-        return None
-
-    def terminate(self) -> None:
-        self.terminated = True
-
-    def wait(self, timeout: float) -> int:
-        return 0
-
-    def kill(self) -> None:
-        self.terminated = True
+    def swipe_points(self, points: list[tuple[int, int]], duration: float = 0.5) -> object:
+        self.calls.append((points, duration))
+        return self.result
 
 
-class FakeStream:
-    def __init__(self) -> None:
-        self.writes: list[bytes] = []
-
-    def write(self, data: bytes) -> int:
-        self.writes.append(data)
-        return len(data)
-
-    def flush(self) -> None:
-        return None
-
-    def readline(self) -> bytes:
-        return b"OK\n"
-
-    def __enter__(self) -> FakeStream:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        return None
-
-
-class FakeConnection:
-    def __init__(self) -> None:
-        self.stream = FakeStream()
-
-    def makefile(self, mode: str) -> FakeStream:
-        assert mode == "rwb"
-        return self.stream
-
-    def __enter__(self) -> FakeConnection:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        return None
-
-
-def test_swipe_uses_one_live_monkey_network_touch_session(tmp_path: Path) -> None:
-    calls: list[list[str]] = []
-    sleeps: list[float] = []
-    connection = FakeConnection()
-    process = FakeProcess()
+def test_swipe_delegates_complete_path_to_uiautomator2(tmp_path: Path) -> None:
+    device = FakeU2Device()
+    connected_serials: list[str] = []
 
     def runner(command: list[str], **kwargs: object) -> Any:
-        calls.append(command)
         if "devices" in command:
             return result("List of devices attached\na device\n")
-        if "forward" in command and "--remove" not in command:
-            return result("4242\n")
         return result()
+
+    def connect(serial: str) -> FakeU2Device:
+        connected_serials.append(serial)
+        return device
 
     adapter = AdbClient(
         Settings(debug_directory=tmp_path),
         configure_logging(stream=io.StringIO()),
         runner=runner,
-        sleeper=sleeps.append,
-        launcher=lambda *args, **kwargs: process,  # type: ignore[arg-type]
-        connector=lambda *args, **kwargs: connection,  # type: ignore[arg-type]
+        u2_connector=connect,
     )
     adapter.select_device()
     receipt = adapter.swipe(
@@ -276,20 +229,26 @@ def test_swipe_uses_one_live_monkey_network_touch_session(tmp_path: Path) -> Non
         )
     )
 
-    assert [data.decode().strip() for data in connection.stream.writes] == [
-        "touch down 10 20",
-        "touch move 30 40",
-        "touch move 50 60",
-        "touch up 50 60",
-        "quit",
-    ]
-    assert sleeps == [0.09, 0.09]
-    assert process.terminated is True
-    assert calls[-1][-3:] == ["forward", "--remove", "tcp:4242"]
+    assert connected_serials == ["a"]
+    assert device.calls == [([(10, 20), (30, 40), (50, 60)], 0.09)]
+    assert receipt.backend_command == ("uiautomator2", "swipe_points", "a")
     assert receipt.timestamps_ms == (0, 90, 180)
-    assert (tmp_path / "swipe_script.txt").read_text(encoding="utf-8") == (
-        "touch down 10 20\n"
-        "touch move 30 40\n"
-        "touch move 50 60\n"
-        "touch up 50 60\n"
+
+
+def test_swipe_rejects_false_uiautomator2_result(tmp_path: Path) -> None:
+    device = FakeU2Device(False)
+
+    def runner(command: list[str], **kwargs: object) -> Any:
+        if "devices" in command:
+            return result("List of devices attached\na device\n")
+        return result()
+
+    adapter = AdbClient(
+        Settings(debug_directory=tmp_path),
+        configure_logging(stream=io.StringIO()),
+        runner=runner,
+        u2_connector=lambda serial: device,
     )
+    adapter.select_device()
+    with pytest.raises(AdbCommandError, match="returned false"):
+        adapter.swipe(SwipePath((PixelPoint(1, 2), PixelPoint(3, 4)), 150))

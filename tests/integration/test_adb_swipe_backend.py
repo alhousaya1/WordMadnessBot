@@ -22,76 +22,33 @@ def _result(stdout: str = "") -> subprocess.CompletedProcess[str]:
     )
 
 
-class Process:
-    def poll(self) -> None:
-        return None
-
-    def terminate(self) -> None:
-        return None
-
-    def wait(self, timeout: float) -> int:
-        return 0
-
-    def kill(self) -> None:
-        return None
-
-
-class Stream:
+class Device:
     def __init__(self) -> None:
-        self.commands: list[str] = []
+        self.points: list[tuple[int, int]] = []
+        self.duration = 0.0
 
-    def write(self, data: bytes) -> int:
-        self.commands.append(data.decode().strip())
-        return len(data)
-
-    def flush(self) -> None:
-        return None
-
-    def readline(self) -> bytes:
-        return b"OK\n"
-
-    def __enter__(self) -> Stream:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        return None
+    def swipe_points(self, points: list[tuple[int, int]], duration: float = 0.5) -> bool:
+        self.points = points
+        self.duration = duration
+        return True
 
 
-class Connection:
-    def __init__(self) -> None:
-        self.stream = Stream()
-
-    def makefile(self, mode: str) -> Stream:
-        assert mode == "rwb"
-        return self.stream
-
-    def __enter__(self) -> Connection:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        return None
-
-
-def test_production_adapter_selects_live_monkey_network_backend(tmp_path: Path) -> None:
-    calls: list[list[str]] = []
+def test_production_adapter_selects_uiautomator2_swipe_points_backend(
+    tmp_path: Path,
+) -> None:
     log_stream = io.StringIO()
-    connection = Connection()
+    device = Device()
 
     def runner(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
-        calls.append(command)
         if "devices" in command:
             return _result("List of devices attached\nsamsung device\n")
-        if "forward" in command and "--remove" not in command:
-            return _result("4242\n")
         return _result()
 
     adapter = AdbClient(
         Settings(adb_retries=0, debug_directory=tmp_path),
         configure_logging(name="test.adb.swipe.backend", stream=log_stream),
         runner=runner,
-        sleeper=lambda _: None,
-        launcher=lambda *args, **kwargs: Process(),  # type: ignore[arg-type]
-        connector=lambda *args, **kwargs: connection,  # type: ignore[arg-type]
+        u2_connector=lambda serial: device,
     )
     adapter.select_device()
     adapter.swipe(
@@ -101,21 +58,14 @@ def test_production_adapter_selects_live_monkey_network_backend(tmp_path: Path) 
         )
     )
 
-    assert connection.stream.commands == [
-        "touch down 100 200",
-        "touch move 300 400",
-        "touch move 500 600",
-        "touch up 500 600",
-        "quit",
-    ]
+    assert device.points == [(100, 200), (300, 400), (500, 600)]
+    assert device.duration == 0.09
     events = [json.loads(line) for line in log_stream.getvalue().splitlines()]
     selection = next(event for event in events if event["event"] == "adb.swipe.backend_selected")
-    assert selection["context"]["backend"] == "monkey_network_touch"
-    assert selection["context"]["host_port"] == 4242
-    assert selection["context"]["device_port"] == 1080
-    assert selection["context"]["backend_command"][-4:] == [
-        "shell",
-        "monkey",
-        "--port",
-        "1080",
-    ]
+    assert selection["context"] == {
+        "backend": "uiautomator2_swipe_points",
+        "backend_command": ["uiautomator2", "swipe_points", "samsung"],
+        "requested_duration_seconds": 0.18,
+        "segment_duration_seconds": 0.09,
+        "point_count": 3,
+    }
