@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -50,12 +50,15 @@ class LevelExecutor:
         completion_animation_wait_seconds: float = 2.0,
         home_poll_wait_seconds: float = 0.5,
         popup_dismiss_wait_seconds: float = 2.0,
+        swipe_duration_ms: int = 500,
         sleeper: Sleeper = time.sleep,
     ) -> None:
         if completion_animation_wait_seconds < 0:
             raise ValueError("completion_animation_wait_seconds cannot be negative")
         if home_poll_wait_seconds < 0:
             raise ValueError("home_poll_wait_seconds cannot be negative")
+        if swipe_duration_ms <= 0:
+            raise ValueError("swipe_duration_ms must be positive")
         if popup_dismiss_wait_seconds < 0:
             raise ValueError("popup_dismiss_wait_seconds cannot be negative")
         self.android = android
@@ -65,6 +68,7 @@ class LevelExecutor:
         self.completion_animation_wait_seconds = completion_animation_wait_seconds
         self.home_poll_wait_seconds = home_poll_wait_seconds
         self.popup_dismiss_wait_seconds = popup_dismiss_wait_seconds
+        self.swipe_duration_ms = swipe_duration_ms
         self.sleeper = sleeper
 
     def execute(
@@ -83,7 +87,7 @@ class LevelExecutor:
             single_word_plan = LevelSolutionPlan(
                 plan.level,
                 plan.recognized_letters,
-                (solution,),
+                (replace(solution, duration_ms=self.swipe_duration_ms),),
             )
             result = self.word_executor.execute(
                 single_word_plan,

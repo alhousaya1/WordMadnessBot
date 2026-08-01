@@ -20,6 +20,7 @@ class Settings:
     adb_executable: str = "adb"
     adb_timeout_seconds: float = 15.0
     adb_retries: int = 2
+    swipe_duration_ms: int = 500
     log_level: str = "INFO"
     data_directory: Path = Path("data")
     log_directory: Path = Path("logs")
@@ -32,6 +33,8 @@ class Settings:
             raise ConfigurationError("adb_executable cannot be empty")
         if self.adb_timeout_seconds <= 0:
             raise ConfigurationError("adb_timeout_seconds must be greater than zero")
+        if self.swipe_duration_ms <= 0:
+            raise ConfigurationError("swipe_duration_ms must be greater than zero")
         if self.adb_retries < 0:
             raise ConfigurationError("adb_retries cannot be negative")
         normalized_level = self.log_level.upper()
@@ -53,6 +56,10 @@ class Settings:
                 values.get(f"{cls.ENV_PREFIX}ADB_RETRIES", "2"),
                 "ADB_RETRIES",
             ),
+            swipe_duration_ms=_positive_int(
+                values.get(f"{cls.ENV_PREFIX}SWIPE_DURATION_MS", "500"),
+                "SWIPE_DURATION_MS",
+            ),
             log_level=values.get(f"{cls.ENV_PREFIX}LOG_LEVEL", "INFO"),
             data_directory=Path(values.get(f"{cls.ENV_PREFIX}DATA_DIRECTORY", "data")),
             log_directory=Path(values.get(f"{cls.ENV_PREFIX}LOG_DIRECTORY", "logs")),
@@ -71,6 +78,16 @@ def _positive_float(value: str, name: str) -> float:
         parsed = float(value)
     except ValueError as error:
         raise ConfigurationError(f"{name} must be a number") from error
+    if parsed <= 0:
+        raise ConfigurationError(f"{name} must be greater than zero")
+    return parsed
+
+
+def _positive_int(value: str, name: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise ConfigurationError(f"{name} must be an integer") from error
     if parsed <= 0:
         raise ConfigurationError(f"{name} must be greater than zero")
     return parsed
