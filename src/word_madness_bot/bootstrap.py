@@ -12,6 +12,10 @@ from word_madness_bot.application.game_loop import GameLoop
 from word_madness_bot.application.ports.android import AndroidPort
 from word_madness_bot.application.ports.levels import LevelRepository
 from word_madness_bot.application.recovery import RecoveryStrategy, RetryPolicy, TimeoutPolicy
+from word_madness_bot.application.solution_planning import (
+    LevelSolutionPlanner,
+    save_level_solution,
+)
 from word_madness_bot.config.logging import StructuredLogger, configure_logging
 from word_madness_bot.config.settings import Settings
 from word_madness_bot.domain.errors import (
@@ -29,8 +33,13 @@ from word_madness_bot.infrastructure.adb.client import AdbClient
 from word_madness_bot.infrastructure.adb.screenshot import save_screenshot
 from word_madness_bot.infrastructure.levels.json_repository import JsonLevelRepository
 from word_madness_bot.vision.letter_recognition import (
+    WheelLetterRecognition,
     WheelLetterRecognitionPort,
     WheelLetterRecognizer,
+)
+from word_madness_bot.vision.level_number import (
+    LevelNumberRecognitionPort,
+    LevelNumberRecognizer,
 )
 from word_madness_bot.vision.screen_classifier import (
     ScreenClassification,
@@ -72,6 +81,8 @@ class ApplicationRuntime:
     screen_classifier: RuntimeScreenClassifier
     wheel_detector: WheelGeometryDetector
     letter_recognizer: WheelLetterRecognitionPort
+    level_number_recognizer: LevelNumberRecognitionPort
+    solution_planner: LevelSolutionPlanner
     clock: Clock = field(default=time.monotonic, repr=False)
     sleeper: Sleeper = field(default=time.sleep, repr=False)
     _started: bool = False
@@ -148,7 +159,8 @@ class ApplicationRuntime:
                 template_confidence=classification.confidence,
             )
             geometry = self._detect_wheel_geometry(capture)
-            self._recognize_letters(capture, geometry)
+            recognition = self._recognize_letters(capture, geometry)
+            self._plan_level_solution(capture, geometry, recognition)
         self._started = True
         self.logger.info("runtime.started", dry_run=dry_run)
 
@@ -202,7 +214,7 @@ class ApplicationRuntime:
         self,
         capture: ScreenCapture,
         geometry: LetterWheelGeometry,
-    ) -> None:
+    ) -> WheelLetterRecognition:
         try:
             recognition = self.letter_recognizer.recognize(
                 capture,
@@ -228,6 +240,37 @@ class ApplicationRuntime:
             "runtime.letters.recognized",
             number_of_letters=len(recognition.letters),
             output_filename=str(self.settings.debug_directory / "letters.json"),
+        )
+        return recognition
+
+    def _plan_level_solution(
+        self,
+        capture: ScreenCapture,
+        geometry: LetterWheelGeometry,
+        recognition: WheelLetterRecognition,
+    ) -> None:
+        started = self.clock()
+        try:
+            level_number = self.level_number_recognizer.recognize(capture)
+            self.logger.info("runtime.level.detected", detected_level=level_number)
+            plan = self.solution_planner.plan(
+                level_number, recognition, geometry, capture.size
+            )
+            output_path = save_level_solution(plan, self.settings.debug_directory)
+        except WordMadnessError as error:
+            self.logger.exception(
+                "runtime.solution.planning_failed",
+                planning_duration_seconds=self.clock() - started,
+                error=str(error),
+            )
+            raise
+        self.logger.info(
+            "runtime.solution.planned",
+            detected_level=plan.level,
+            recognized_letters=list(plan.recognized_letters),
+            number_of_solution_words=len(plan.solutions),
+            planning_duration_seconds=self.clock() - started,
+            output_filename=str(output_path),
         )
 
     def _classify(self, capture: ScreenCapture) -> ScreenClassification:
@@ -286,6 +329,7 @@ def build_runtime(
     screen_classifier: RuntimeScreenClassifier | None = None,
     wheel_detector: WheelGeometryDetector | None = None,
     letter_recognizer: WheelLetterRecognitionPort | None = None,
+    level_number_recognizer: LevelNumberRecognitionPort | None = None,
     clock: Clock = time.monotonic,
     sleeper: Sleeper = time.sleep,
 ) -> ApplicationRuntime:
@@ -308,6 +352,8 @@ def build_runtime(
         screen_classifier=screen_classifier or ScreenClassifier(),
         wheel_detector=wheel_detector or LetterWheelDetector(),
         letter_recognizer=letter_recognizer or WheelLetterRecognizer(),
+        level_number_recognizer=level_number_recognizer or LevelNumberRecognizer(),
+        solution_planner=LevelSolutionPlanner(levels, planner),
         clock=clock,
         sleeper=sleeper,
     )

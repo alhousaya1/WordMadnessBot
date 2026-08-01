@@ -45,4 +45,9 @@ def test_missing_level_is_typed() -> None:
 
 
 def test_packaged_repository_loads() -> None:
-    assert JsonLevelRepository.from_package().all_levels() == ()
+    levels = JsonLevelRepository.from_package().all_levels()
+    assert len(levels) == 1
+    assert levels[0].number == 90
+    assert levels[0].words == (
+        "DON", "DUN", "DUO", "FUN", "NOD", "FOND", "FUND", "FOUND"
+    )
