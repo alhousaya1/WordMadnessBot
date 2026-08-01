@@ -80,6 +80,8 @@ class WordExecutionResult:
     coordinates: tuple[PixelPoint, ...]
     acceptance: AcceptanceResult
     elapsed_seconds: float
+    timestamps_ms: tuple[int, ...]
+    backend_command: tuple[str, ...]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -92,6 +94,8 @@ class WordExecutionResult:
                 "mean_absolute_difference": self.acceptance.mean_absolute_difference,
             },
             "elapsed_seconds": self.elapsed_seconds,
+            "timestamps_ms": list(self.timestamps_ms),
+            "backend_command": list(self.backend_command),
         }
 
 
@@ -131,7 +135,9 @@ class SingleWordExecutor:
         swipe_path = debug_directory / "swipe.json"
         try:
             save_screenshot(before.data, before_path)
-            self.android.swipe(SwipePath(first.coordinates, first.duration_ms))
+            receipt = self.android.swipe(
+                SwipePath(first.coordinates, first.duration_ms)
+            )
             self.sleeper(self.animation_wait_seconds)
             after = self.android.capture_screenshot()
             save_screenshot(after.data, after_path)
@@ -142,6 +148,8 @@ class SingleWordExecutor:
                 first.coordinates,
                 acceptance,
                 self.clock() - started,
+                receipt.timestamps_ms,
+                receipt.backend_command,
             )
             swipe_path.write_text(
                 json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n",
