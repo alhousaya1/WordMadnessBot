@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import io
 import itertools
-import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
 from importlib.resources import files
@@ -32,7 +30,13 @@ class HomeLevelButton:
 
 
 class HomeLevelButtonPort(Protocol):
-    def detect(self, capture: ScreenCapture) -> HomeLevelButton: ...
+    def locate(self, capture: ScreenCapture) -> PixelRect: ...
+
+    def recognize_level(
+        self, capture: ScreenCapture, region: PixelRect
+    ) -> HomeLevelButton: ...
+
+    def ocr_crop_size(self, region: PixelRect) -> tuple[int, int]: ...
 
 
 class PopupCloseButtonPort(Protocol):
@@ -59,14 +63,9 @@ class YellowLevelButtonDetector:
         debug_directory: Path = Path("debug"),
         *,
         minimum_digit_confidence: float = 0.72,
-        recapture: Callable[[], ScreenCapture] | None = None,
-        retry_wait_seconds: float = 0.5,
-        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         if not 0.0 <= minimum_digit_confidence <= 1.0:
             raise ValueError("minimum_digit_confidence must be between zero and one")
-        if retry_wait_seconds < 0:
-            raise ValueError("retry_wait_seconds must not be negative")
         package = files("word_madness_bot.resources.digits")
         self._templates = {
             digit: _normalize_mask(
@@ -76,35 +75,28 @@ class YellowLevelButtonDetector:
         }
         self.minimum_digit_confidence = minimum_digit_confidence
         self.debug_directory = debug_directory
-        self.recapture = recapture
-        self.retry_wait_seconds = retry_wait_seconds
-        self.sleeper = sleeper
+
     def detect(self, capture: ScreenCapture) -> HomeLevelButton:
-        current = capture
-        while True:
-            image = _decode_color(current)
-            region, mask, candidates = self._locate(image)
-            if region is None:
-                self._save_failure_debug(current, image, mask, candidates)
-                raise RuntimeNavigationError("Yellow level button was not detected")
-            self._save_success_debug(current, image, mask, region)
-            try:
-                level = self._read_level(image, region)
-            except OcrError:
-                if self.recapture is None:
-                    raise
-                self.sleeper(self.retry_wait_seconds)
-                current = self.recapture()
-                continue
-            return HomeLevelButton(region, level, self.ocr_crop_size(region))
+        """Detect and recognize from one supplied Home Screen capture."""
+        region = self.locate(capture)
+        return self.recognize_level(capture, region)
 
     def locate(self, capture: ScreenCapture) -> PixelRect:
-        """Locate the button independently of its changing text."""
-        region, _, _ = self._locate(_decode_color(capture))
+        """Locate the button once, without performing OCR or recapturing."""
+        image = _decode_color(capture)
+        region, mask, candidates = self._locate(image)
         if region is None:
+            self._save_failure_debug(capture, image, mask, candidates)
             raise RuntimeNavigationError("Yellow level button was not detected")
+        self._save_success_debug(capture, image, mask, region)
         return region
 
+    def recognize_level(
+        self, capture: ScreenCapture, region: PixelRect
+    ) -> HomeLevelButton:
+        """Read the level from the detected button in the same capture."""
+        level = self._read_level(_decode_color(capture), region)
+        return HomeLevelButton(region, level, self.ocr_crop_size(region))
     def ocr_crop_size(self, region: PixelRect) -> tuple[int, int]:
         """Return the exact interior dimensions supplied to level-number OCR."""
         inset_x = max(2, round(region.width * 0.02))

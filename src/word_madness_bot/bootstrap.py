@@ -168,17 +168,18 @@ class ApplicationRuntime:
         self.logger.info("runtime.started", dry_run=dry_run)
 
     def _detect_home_level_button(self, capture: ScreenCapture) -> HomeLevelButton:
-        button = self.home_level_button_detector.detect(capture)
-        region = button.region
+        region = self.home_level_button_detector.locate(capture)
+        crop_width, crop_height = self.home_level_button_detector.ocr_crop_size(region)
         self.logger.info(
             "runtime.start_level.detected",
             button_left=region.left,
             button_top=region.top,
             button_width=region.width,
             button_height=region.height,
-            ocr_crop_size=f"{button.ocr_crop_size[0]}x{button.ocr_crop_size[1]}",
+            ocr_crop_size=f"{crop_width}x{crop_height}",
             template_confidence=None,
         )
+        button = self.home_level_button_detector.recognize_level(capture, region)
         self.logger.info("runtime.level.detected", detected_level=button.level)
         return button
 
@@ -450,11 +451,7 @@ def build_runtime(
         ),
         home_level_button_detector=(
             home_level_button_detector
-            or YellowLevelButtonDetector(
-                settings.debug_directory,
-                recapture=android.capture_screenshot,
-                sleeper=sleeper,
-            )
+            or YellowLevelButtonDetector(settings.debug_directory)
         ),
         clock=clock,
         sleeper=sleeper,
