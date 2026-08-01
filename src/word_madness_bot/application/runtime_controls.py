@@ -35,7 +35,7 @@ class CompletionOverlayDetector:
         gray = cv2.cvtColor(_decode_color(capture), cv2.COLOR_BGR2GRAY)
         height, width = gray.shape
         region = gray[
-            round(height * 0.62) : round(height * 0.92),
+            round(height * 0.75) : round(height * 0.95),
             round(width * 0.18) : round(width * 0.82),
         ]
         return _has_text_line(region, minimum_components=6)
