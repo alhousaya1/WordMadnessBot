@@ -26,6 +26,7 @@ from word_madness_bot.domain.models import (
     DeviceState,
     DisplayMetrics,
     ScreenCapture,
+    SwipeExecutionReceipt,
     SwipePath,
 )
 from word_madness_bot.infrastructure.adb.screenshot import parse_png_size
@@ -104,7 +105,7 @@ class AdbClient(AndroidPort):
     def tap(self, point: PixelPoint) -> None:
         self._run_text(["shell", "input", "tap", str(point.x), str(point.y)], retry=False)
 
-    def swipe(self, path: SwipePath) -> None:
+    def swipe(self, path: SwipePath) -> SwipeExecutionReceipt:
         timestamps = tuple(
             round(index * path.duration_ms / (len(path.points) - 1))
             for index in range(len(path.points))
@@ -151,6 +152,7 @@ class AdbClient(AndroidPort):
             backend_command=list(backend_command),
             timestamps_ms=list(timestamps),
         )
+        return SwipeExecutionReceipt(backend_command, timestamps)
 
     def press_back(self) -> None:
         self._run_text(["shell", "input", "keyevent", "BACK"], retry=False)
