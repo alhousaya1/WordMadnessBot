@@ -142,12 +142,19 @@ class FakeHomeLevelButtonDetector:
         self.level = level
         self.calls = 0
 
-    def detect(self, capture: ScreenCapture) -> HomeLevelButton:
+    def locate(self, capture: ScreenCapture) -> PixelRect:
         self.calls += 1
         if self.fail:
             raise RuntimeNavigationError("Yellow level button was not detected")
-        return HomeLevelButton(PixelRect(200, 600, 400, 120), self.level)
+        return PixelRect(200, 600, 400, 120)
 
+    def recognize_level(
+        self, capture: ScreenCapture, region: PixelRect
+    ) -> HomeLevelButton:
+        return HomeLevelButton(region, self.level, self.ocr_crop_size(region))
+
+    def ocr_crop_size(self, region: PixelRect) -> tuple[int, int]:
+        return region.width - 16, region.height - 20
 
 class FakePopupCloseDetector:
     def detect(self, capture: ScreenCapture) -> PixelRect | None:
@@ -282,9 +289,11 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     assert android.captures == 8
     assert classifier.calls == 3
     output = stream.getvalue()
-    assert '"event": "runtime.start_level.detected"' in output
+    detected_index = output.index('"event": "runtime.start_level.detected"')
+    level_index = output.index('"event": "runtime.level.detected"')
+    tap_index = output.index('"event": "runtime.start_level.tap"')
+    assert detected_index < level_index < tap_index
     assert '"button_left": 200' in output
-    assert '"event": "runtime.start_level.tap"' in output
     assert '"event": "runtime.level.entered"' in output
     assert '"event": "runtime.wheel.detected"' in output
     assert '"center_x": 540' in output

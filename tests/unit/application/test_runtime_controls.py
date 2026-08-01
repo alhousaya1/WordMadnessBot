@@ -77,37 +77,22 @@ def test_uses_largest_yellow_contour_only_in_lower_middle() -> None:
     assert region == PixelRect(251, 1201, 501, 151)
 
 
-def test_retries_with_a_new_capture_when_level_ocr_fails(tmp_path: Path) -> None:
+def test_ocr_failure_does_not_trigger_screenshot_polling(tmp_path: Path) -> None:
     capture = _capture("home_screen.png")
-    recaptures: list[ScreenCapture] = []
-    waits: list[float] = []
 
-    class RetryDetector(YellowLevelButtonDetector):
+    class FailingDetector(YellowLevelButtonDetector):
         attempts = 0
 
         def _read_level(self, image: object, region: PixelRect) -> int:
             self.attempts += 1
-            if self.attempts == 1:
-                raise OcrError("temporary OCR failure")
-            return 90
+            raise OcrError("OCR failed")
 
-    def recapture() -> ScreenCapture:
-        recaptures.append(capture)
-        return capture
+    detector = FailingDetector(tmp_path)
 
-    detector = RetryDetector(
-        tmp_path,
-        recapture=recapture,
-        sleeper=waits.append,
-    )
+    with pytest.raises(OcrError, match="OCR failed"):
+        detector.detect(capture)
 
-    result = detector.detect(capture)
-
-    assert result.level == 90
-    assert detector.attempts == 2
-    assert recaptures == [capture]
-    assert waits == [0.5]
-
+    assert detector.attempts == 1
 
 def test_saves_all_candidates_when_yellow_button_detection_fails(
     tmp_path: Path,
