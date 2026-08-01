@@ -62,7 +62,8 @@ class CompletionOverlayDetector:
         )
 
     def completion_home_visible(self, capture: ScreenCapture) -> bool:
-        return _has_yellow_level_button(_decode_color(capture))
+        image = _decode_color(capture)
+        return _has_intelligent_heading(image) or _has_yellow_level_button(image)
 
     def settings_visible(self, capture: ScreenCapture) -> bool:
         image = _decode_color(capture)
@@ -118,6 +119,30 @@ def _back_arrow_region(gray: Any) -> Any:
         round(height * 0.02) : round(height * 0.18),
         round(width * 0.01) : round(width * 0.16),
     ]
+
+
+def _has_intelligent_heading(image: Any) -> bool:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    height, width = gray.shape
+    region = gray[
+        round(height * 0.08) : round(height * 0.30),
+        round(width * 0.12) : round(width * 0.88),
+    ]
+    _, mask = cv2.threshold(region, 165, 255, cv2.THRESH_BINARY)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    centers: list[int] = []
+    for _, top, glyph_width, glyph_height, area in stats[1:count]:
+        if (
+            area >= 12
+            and round(height * 0.018) <= glyph_height <= round(height * 0.10)
+            and glyph_width <= round(width * 0.12)
+        ):
+            centers.append(top + glyph_height // 2)
+    tolerance = max(4, round(height * 0.012))
+    return any(
+        sum(abs(candidate - center) <= tolerance for candidate in centers) >= 10
+        for center in centers
+    )
 
 
 def _has_yellow_level_button(image: Any) -> bool:
