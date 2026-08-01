@@ -121,11 +121,19 @@ class LevelExecutor:
                 )
             self.sleeper(self.recovery_poll_seconds)
             current = self.android.capture_screenshot()
+            classification = self.screen_classifier.classify(current)
+            completion_home = (
+                self.completion_overlay_detector is not None
+                and self.completion_overlay_detector.completion_home_visible(current)
+            )
+            if completion_home or classification.screen is ScreenType.HOME_SCREEN:
+                return LevelExecutionResult(tuple(results), current)
+
             if (
                 self.completion_overlay_detector is not None
                 and self.completion_overlay_detector.tap_to_continue_visible(current)
             ):
-                self.android.tap(NormalizedPoint(0.5, 0.5).to_pixels(current.size))
+                self.android.tap(NormalizedPoint(0.5, 0.9).to_pixels(current.size))
                 continue
 
             if (
@@ -148,8 +156,12 @@ class LevelExecutor:
                     )
                 )
                 continue
-            classification = self.screen_classifier.classify(current)
-            if classification.screen is ScreenType.HOME_SCREEN:
-                return LevelExecutionResult(tuple(results), current)
+            if (
+                self.completion_overlay_detector is not None
+                and self.completion_overlay_detector.settings_visible(current)
+            ):
+                self.android.tap(NormalizedPoint(0.05, 0.07).to_pixels(current.size))
+                continue
+
             if classification.screen in {ScreenType.LEVEL_SCREEN, ScreenType.UNKNOWN}:
                 continue

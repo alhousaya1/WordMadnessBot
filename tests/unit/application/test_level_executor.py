@@ -156,7 +156,11 @@ def test_dismisses_reappearing_popup_until_it_is_gone(tmp_path: Path) -> None:
     executor = LevelExecutor(
         android,  # type: ignore[arg-type]
         words,  # type: ignore[arg-type]
-        Classifier(ScreenType.HOME_SCREEN),
+        Classifier(
+            ScreenType.UNKNOWN,
+            ScreenType.UNKNOWN,
+            ScreenType.HOME_SCREEN,
+        ),
         PopupDetector(popup, popup, None),
         sleeper=sleeps.append,
     )
@@ -170,17 +174,27 @@ def test_dismisses_reappearing_popup_until_it_is_gone(tmp_path: Path) -> None:
 class CompletionOverlayDetector:
     def __init__(
         self,
-        tap_to_continue: tuple[bool, ...],
-        daily_celebration: tuple[bool, ...],
+        tap_to_continue: tuple[bool, ...] = (),
+        daily_celebration: tuple[bool, ...] = (),
+        completion_home: tuple[bool, ...] = (),
+        settings: tuple[bool, ...] = (),
     ) -> None:
         self.tap_to_continue = iter(tap_to_continue)
         self.daily_celebration = iter(daily_celebration)
+        self.completion_home = iter(completion_home)
+        self.settings = iter(settings)
 
     def tap_to_continue_visible(self, capture: ScreenCapture) -> bool:
-        return next(self.tap_to_continue)
+        return next(self.tap_to_continue, False)
 
     def daily_celebration_visible(self, capture: ScreenCapture) -> bool:
-        return next(self.daily_celebration)
+        return next(self.daily_celebration, False)
+
+    def completion_home_visible(self, capture: ScreenCapture) -> bool:
+        return next(self.completion_home, False)
+
+    def settings_visible(self, capture: ScreenCapture) -> bool:
+        return next(self.settings, False)
 
 
 def test_recovers_completion_overlays_in_priority_order(tmp_path: Path) -> None:
@@ -190,7 +204,12 @@ def test_recovers_completion_overlays_in_priority_order(tmp_path: Path) -> None:
     executor = LevelExecutor(
         android,  # type: ignore[arg-type]
         WordExecutor((True, True)),  # type: ignore[arg-type]
-        Classifier(ScreenType.HOME_SCREEN),
+        Classifier(
+            ScreenType.UNKNOWN,
+            ScreenType.UNKNOWN,
+            ScreenType.UNKNOWN,
+            ScreenType.HOME_SCREEN,
+        ),
         PopupDetector(popup, None),
         CompletionOverlayDetector(
             (True, False, False, False),
@@ -202,7 +221,7 @@ def test_recovers_completion_overlays_in_priority_order(tmp_path: Path) -> None:
     executor.execute(_plan(), CAPTURE, tmp_path)
 
     assert android.taps == [
-        PixelPoint(200, 400),
+        PixelPoint(200, 719),
         PixelPoint(20, 56),
         PixelPoint(320, 40),
     ]
@@ -233,3 +252,63 @@ def test_raises_when_completion_recovery_exceeds_twenty_seconds(
         executor.execute(_plan(), CAPTURE, tmp_path)
 
     assert android.captures == 4
+
+
+def test_completion_home_takes_ownership_before_arrow_handlers(tmp_path: Path) -> None:
+    android = Android()
+    detector = CompletionOverlayDetector(
+        tap_to_continue=(True,),
+        daily_celebration=(True,),
+        completion_home=(True,),
+    )
+    executor = LevelExecutor(
+        android,  # type: ignore[arg-type]
+        WordExecutor((True, True)),  # type: ignore[arg-type]
+        Classifier(ScreenType.UNKNOWN),
+        PopupDetector(PixelRect(300, 20, 40, 40)),
+        detector,
+        sleeper=lambda _: None,
+    )
+
+    executor.execute(_plan(), CAPTURE, tmp_path)
+
+    assert android.taps == []
+    assert next(detector.tap_to_continue) is True
+    assert next(detector.daily_celebration) is True
+
+
+def test_normal_home_takes_ownership_before_arrow_handlers(tmp_path: Path) -> None:
+    android = Android()
+    detector = CompletionOverlayDetector(daily_celebration=(True,))
+    executor = LevelExecutor(
+        android,  # type: ignore[arg-type]
+        WordExecutor((True, True)),  # type: ignore[arg-type]
+        Classifier(ScreenType.HOME_SCREEN),
+        PopupDetector(PixelRect(300, 20, 40, 40)),
+        detector,
+        sleeper=lambda _: None,
+    )
+
+    executor.execute(_plan(), CAPTURE, tmp_path)
+
+    assert android.taps == []
+    assert next(detector.daily_celebration) is True
+
+
+def test_settings_page_taps_back_once_then_returns_to_home(tmp_path: Path) -> None:
+    android = Android()
+    sleeps: list[float] = []
+    executor = LevelExecutor(
+        android,  # type: ignore[arg-type]
+        WordExecutor((True, True)),  # type: ignore[arg-type]
+        Classifier(ScreenType.UNKNOWN, ScreenType.HOME_SCREEN),
+        PopupDetector(None),
+        CompletionOverlayDetector(settings=(True,)),
+        sleeper=sleeps.append,
+    )
+
+    executor.execute(_plan(), CAPTURE, tmp_path)
+
+    assert android.taps == [PixelPoint(20, 56)]
+    assert android.captures == 2
+    assert sleeps == [1.0, 0.5, 0.5]

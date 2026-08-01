@@ -27,50 +27,125 @@ class CompletionOverlayPort(Protocol):
 
     def daily_celebration_visible(self, capture: ScreenCapture) -> bool: ...
 
+    def completion_home_visible(self, capture: ScreenCapture) -> bool: ...
+
+    def settings_visible(self, capture: ScreenCapture) -> bool: ...
+
 
 class CompletionOverlayDetector:
-    """Detect bright post-level controls in their stable normalized regions."""
+    """Detect post-level controls in their stable normalized regions."""
 
     def tap_to_continue_visible(self, capture: ScreenCapture) -> bool:
-        gray = cv2.cvtColor(_decode_color(capture), cv2.COLOR_BGR2GRAY)
+        image = _decode_color(capture)
+        if _has_yellow_level_button(image):
+            return False
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         height, width = gray.shape
         region = gray[
-            round(height * 0.75) : round(height * 0.95),
-            round(width * 0.18) : round(width * 0.82),
+            round(height * 0.60) : round(height * 0.96),
+            round(width * 0.12) : round(width * 0.88),
         ]
         return _has_text_line(region, minimum_components=6)
 
     def daily_celebration_visible(self, capture: ScreenCapture) -> bool:
-        gray = cv2.cvtColor(_decode_color(capture), cv2.COLOR_BGR2GRAY)
+        image = _decode_color(capture)
+        if _has_yellow_level_button(image):
+            return False
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         height, width = gray.shape
-        arrow_region = gray[
-            round(height * 0.02) : round(height * 0.18),
-            round(width * 0.01) : round(width * 0.16),
-        ]
         heading_region = gray[
             round(height * 0.04) : round(height * 0.24),
             round(width * 0.18) : round(width * 0.82),
         ]
-        return _has_back_arrow(arrow_region) and _has_text_line(
+        return _has_back_arrow(_back_arrow_region(gray)) and _has_text_line(
             heading_region, minimum_components=8
         )
 
+    def completion_home_visible(self, capture: ScreenCapture) -> bool:
+        return _has_yellow_level_button(_decode_color(capture))
+
+    def settings_visible(self, capture: ScreenCapture) -> bool:
+        image = _decode_color(capture)
+        if _has_yellow_level_button(image):
+            return False
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        height, width = gray.shape
+        content = gray[
+            round(height * 0.10) : round(height * 0.88),
+            round(width * 0.10) : round(width * 0.78),
+        ]
+        return _has_back_arrow(_back_arrow_region(gray)) and _text_row_count(content) >= 4
+
 
 def _has_text_line(region: Any, *, minimum_components: int) -> bool:
-    _, mask = cv2.threshold(region, 210, 255, cv2.THRESH_BINARY)
+    _, mask = cv2.threshold(region, 165, 255, cv2.THRESH_BINARY)
     count, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     region_height, region_width = region.shape
-    components = 0
+    centers: list[int] = []
     for left, top, width, height, area in stats[1:count]:
-        del left, top
+        del left
         if (
             area >= 6
-            and height >= max(2, round(region_height * 0.025))
-            and height <= round(region_height * 0.35)
+            and height >= max(2, round(region_height * 0.008))
+            and height <= round(region_height * 0.18)
             and width <= round(region_width * 0.20)
         ):
-            components += 1
-    return components >= minimum_components
+            centers.append(top + height // 2)
+    row_tolerance = max(4, round(region_height * 0.04))
+    return any(
+        sum(abs(candidate - center) <= row_tolerance for candidate in centers) >= minimum_components
+        for center in centers
+    )
+
+
+def _text_row_count(region: Any) -> int:
+    _, mask = cv2.threshold(region, 165, 255, cv2.THRESH_BINARY)
+    horizontal_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (max(3, round(region.shape[1] * 0.04)), 3),
+    )
+    joined = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, horizontal_kernel)
+    contours, _ = cv2.findContours(joined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return sum(
+        width >= round(region.shape[1] * 0.12) and height <= round(region.shape[0] * 0.12)
+        for _, _, width, height in (cv2.boundingRect(contour) for contour in contours)
+    )
+
+
+def _back_arrow_region(gray: Any) -> Any:
+    height, width = gray.shape
+    return gray[
+        round(height * 0.02) : round(height * 0.18),
+        round(width * 0.01) : round(width * 0.16),
+    ]
+
+
+def _has_yellow_level_button(image: Any) -> bool:
+    height, width = image.shape[:2]
+    region = image[
+        round(height * 0.52) : round(height * 0.78),
+        round(width * 0.15) : round(width * 0.85),
+    ]
+    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(
+        hsv,
+        np.array((15, 100, 120), dtype=np.uint8),
+        np.array((42, 255, 255), dtype=np.uint8),
+    )
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for contour in contours:
+        _, _, candidate_width, candidate_height = cv2.boundingRect(contour)
+        if candidate_height == 0:
+            continue
+        fill_ratio = cv2.contourArea(contour) / (candidate_width * candidate_height)
+        if (
+            candidate_width >= round(width * 0.18)
+            and round(height * 0.035) <= candidate_height <= round(height * 0.14)
+            and candidate_width / candidate_height >= 2.0
+            and fill_ratio >= 0.55
+        ):
+            return True
+    return False
 
 
 def _has_back_arrow(region: Any) -> bool:

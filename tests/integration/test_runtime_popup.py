@@ -58,6 +58,12 @@ class CompletionOverlayDetector:
     def daily_celebration_visible(self, capture: ScreenCapture) -> bool:
         return False
 
+    def completion_home_visible(self, capture: ScreenCapture) -> bool:
+        return False
+
+    def settings_visible(self, capture: ScreenCapture) -> bool:
+        return False
+
 class AcceptanceVerifier:
     def verify(
         self, before: ScreenCapture, after: ScreenCapture, confirmation: ScreenCapture
