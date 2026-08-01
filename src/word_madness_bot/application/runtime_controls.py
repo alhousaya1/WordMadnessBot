@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import io
-import itertools
+import re
+import shutil
+import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, Protocol
-
-from PIL import Image
 
 from word_madness_bot.domain.errors import OcrError, RuntimeNavigationError
 from word_madness_bot.domain.geometry import PixelRect
@@ -43,18 +43,6 @@ class PopupCloseButtonPort(Protocol):
     def detect(self, capture: ScreenCapture) -> PixelRect | None: ...
 
 
-@dataclass(frozen=True, slots=True)
-class _Glyph:
-    left: int
-    width: int
-    height: int
-    mask: Any
-
-    @property
-    def right(self) -> int:
-        return self.left + self.width
-
-
 class YellowLevelButtonDetector:
     """Locate the yellow rounded rectangle and read only its interior text."""
 
@@ -62,19 +50,16 @@ class YellowLevelButtonDetector:
         self,
         debug_directory: Path = Path("debug"),
         *,
-        minimum_digit_confidence: float = 0.72,
+        tesseract_runner: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+        tesseract_executable: str | None = None,
+        maximum_ocr_attempts: int = 3,
     ) -> None:
-        if not 0.0 <= minimum_digit_confidence <= 1.0:
-            raise ValueError("minimum_digit_confidence must be between zero and one")
-        package = files("word_madness_bot.resources.digits")
-        self._templates = {
-            digit: _normalize_mask(
-                Image.open(io.BytesIO(package.joinpath(f"{digit}.png").read_bytes()))
-            )
-            for digit in "0123456789"
-        }
-        self.minimum_digit_confidence = minimum_digit_confidence
+        if maximum_ocr_attempts <= 0:
+            raise ValueError("maximum_ocr_attempts must be positive")
         self.debug_directory = debug_directory
+        self.tesseract_runner = tesseract_runner
+        self.tesseract_executable = tesseract_executable or _find_tesseract()
+        self.maximum_ocr_attempts = maximum_ocr_attempts
 
     def detect(self, capture: ScreenCapture) -> HomeLevelButton:
         """Detect and recognize from one supplied Home Screen capture."""
@@ -193,61 +178,58 @@ class YellowLevelButtonDetector:
         self.debug_directory.mkdir(parents=True, exist_ok=True)
         (self.debug_directory / "home_screen.png").write_bytes(capture.data)
         _save_png(self.debug_directory / "yellow_mask.png", mask)
+
     def _read_level(self, image: Any, region: PixelRect) -> int:
-        inset_x = max(2, round(region.width * 0.02))
-        inset_y = max(2, round(region.height * 0.08))
         roi = image[
-            region.top + inset_y : region.top + region.height - inset_y,
-            region.left + inset_x : region.left + region.width - inset_x,
+            region.top : region.top + region.height,
+            region.left : region.left + region.width,
         ]
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        _, binary = cv2.threshold(
-            gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        upscaled = cv2.resize(
+            gray,
+            None,
+            fx=4.0,
+            fy=4.0,
+            interpolation=cv2.INTER_CUBIC,
         )
-        contours, _ = cv2.findContours(
-            binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        thresholded = cv2.adaptiveThreshold(
+            upscaled,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31,
+            11,
         )
-        glyphs: list[_Glyph] = []
-        for contour in contours:
-            left, _, glyph_width, glyph_height = cv2.boundingRect(contour)
-            if not 0.20 * roi.shape[0] <= glyph_height <= 0.75 * roi.shape[0]:
+        encoded, png = cv2.imencode(".png", thresholded)
+        if not encoded:
+            raise OcrError("Unable to encode Home level OCR crop")
+        command = [
+            self.tesseract_executable,
+            "stdin",
+            "stdout",
+            "--psm",
+            "7",
+            "-c",
+            "tessedit_char_whitelist=0123456789",
+        ]
+        for _ in range(self.maximum_ocr_attempts):
+            try:
+                result = self.tesseract_runner(
+                    command,
+                    input=png.tobytes(),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                    timeout=10.0,
+                )
+            except (OSError, subprocess.SubprocessError):
                 continue
-            if glyph_width < 2 or glyph_width > glyph_height * 1.25:
-                continue
-            top = cv2.boundingRect(contour)[1]
-            glyphs.append(
-                _Glyph(
-                    left,
-                    glyph_width,
-                    glyph_height,
-                    binary[top : top + glyph_height, left : left + glyph_width],
-                )
-            )
-        glyphs.sort(key=lambda glyph: glyph.left)
-        numeric = _numeric_suffix(glyphs)
-        if not numeric:
-            raise OcrError("No level number was detected inside the yellow button")
-        output: list[str] = []
-        for glyph in numeric:
-            source = _normalize_array(glyph.mask)
-            scores = {
-                digit: float(
-                    cv2.matchTemplate(source, template, cv2.TM_CCOEFF_NORMED)[0, 0]
-                )
-                for digit, template in self._templates.items()
-            }
-            digit, score = max(scores.items(), key=lambda item: (item[1], item[0]))
-            confidence = min(1.0, max(0.0, (score + 1.0) / 2.0))
-            if confidence < self.minimum_digit_confidence:
-                raise OcrError(
-                    f"Home level digit confidence is too low: {confidence:.3f}"
-                )
-            output.append(digit)
-        level = int("".join(output))
-        if level <= 0:
-            raise OcrError("Detected Home level number must be positive")
-        return level
-
+            digits = re.sub(r"\D", "", result.stdout.decode("utf-8", errors="ignore"))
+            if result.returncode == 0 and digits:
+                level = int(digits)
+                if 1 <= level <= 1010:
+                    return level
+        raise OcrError("Home level OCR did not return an integer between 1 and 1010")
 
 class UpperRightPopupCloseDetector:
     """Find supported X-button appearances only in the upper-right screen region."""
@@ -299,6 +281,15 @@ class UpperRightPopupCloseDetector:
         return best[1]
 
 
+def _find_tesseract() -> str:
+    executable = shutil.which("tesseract")
+    if executable is not None:
+        return executable
+    standard_windows_path = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+    if standard_windows_path.is_file():
+        return str(standard_windows_path)
+    return "tesseract"
+
 def _draw_box(image: Any, region: PixelRect, color: tuple[int, int, int]) -> None:
     cv2.rectangle(
         image,
@@ -321,40 +312,3 @@ def _decode_color(capture: ScreenCapture) -> Any:
     if image is None:
         raise RuntimeNavigationError("Unable to decode runtime control screenshot")
     return image
-
-
-def _numeric_suffix(glyphs: list[_Glyph]) -> list[_Glyph]:
-    if len(glyphs) < 2:
-        return []
-    gaps = [
-        current.left - previous.right
-        for previous, current in itertools.pairwise(glyphs)
-    ]
-    split = max(range(len(gaps)), key=gaps.__getitem__)
-    suffix = glyphs[split + 1 :]
-    return suffix if gaps[split] > max(3, round(glyphs[split].height * 0.25)) else []
-
-
-def _normalize_mask(image: Image.Image) -> Any:
-    gray = np.asarray(image.convert("L"), dtype=np.uint8)
-    _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return _normalize_array(mask)
-
-
-def _normalize_array(mask: Any) -> Any:
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        raise OcrError("No digit foreground was detected")
-    left, top, width, height = cv2.boundingRect(max(contours, key=cv2.contourArea))
-    glyph = mask[top : top + height, left : left + width]
-    scale = 48 / max(width, height)
-    resized = cv2.resize(
-        glyph,
-        (max(1, round(width * scale)), max(1, round(height * scale))),
-        interpolation=cv2.INTER_AREA,
-    )
-    normalized = np.zeros((64, 64), dtype=np.uint8)
-    y = (64 - resized.shape[0]) // 2
-    x = (64 - resized.shape[1]) // 2
-    normalized[y : y + resized.shape[0], x : x + resized.shape[1]] = resized
-    return normalized

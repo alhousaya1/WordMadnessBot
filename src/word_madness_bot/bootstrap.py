@@ -138,34 +138,47 @@ class ApplicationRuntime:
                 )
                 classification = self._classify(capture)
 
-            if classification.screen is not ScreenType.HOME_SCREEN:
+            completed_levels = 0
+            if classification.screen is ScreenType.LEVEL_SCREEN:
+                level_number = self.level_number_recognizer.recognize(capture)
+                self.logger.info(
+                    "runtime.level.detected",
+                    detected_level=level_number,
+                )
+                capture = self._solve_detected_level(capture, level_number)
+                completed_levels += 1
+            elif classification.screen is not ScreenType.HOME_SCREEN:
                 self._raise_navigation_failure(
                     classification, reason="home_screen_not_reached"
                 )
 
-            completed_levels = 0
-            while True:
+            while max_levels is None or completed_levels < max_levels:
                 button = self._detect_home_level_button(capture)
                 capture, classification = self._enter_level(button)
                 self.logger.info(
                     "runtime.level.entered",
                     template_confidence=classification.confidence,
                 )
-                geometry = self._detect_wheel_geometry(capture)
-                recognition = self._recognize_letters(capture, geometry)
-                plan = self._plan_level_solution(
-                    capture,
-                    geometry,
-                    recognition,
-                    level_number=button.level,
-                )
-                self.sleeper(10.0)
-                capture = self._execute_level(capture, plan)
+                capture = self._solve_detected_level(capture, button.level)
                 completed_levels += 1
-                if max_levels is not None and completed_levels >= max_levels:
-                    break
         self._started = True
         self.logger.info("runtime.started", dry_run=dry_run)
+
+    def _solve_detected_level(
+        self,
+        capture: ScreenCapture,
+        level_number: int,
+    ) -> ScreenCapture:
+        geometry = self._detect_wheel_geometry(capture)
+        recognition = self._recognize_letters(capture, geometry)
+        plan = self._plan_level_solution(
+            capture,
+            geometry,
+            recognition,
+            level_number=level_number,
+        )
+        self.sleeper(10.0)
+        return self._execute_level(capture, plan)
 
     def _detect_home_level_button(self, capture: ScreenCapture) -> HomeLevelButton:
         region = self.home_level_button_detector.locate(capture)

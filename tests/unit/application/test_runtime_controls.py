@@ -1,4 +1,5 @@
 import io
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -100,6 +101,48 @@ def test_ocr_failure_does_not_trigger_screenshot_polling(tmp_path: Path) -> None
         detector.detect(capture)
 
     assert detector.attempts == 1
+
+def test_tesseract_retries_invalid_result_with_digit_only_configuration(
+    tmp_path: Path,
+) -> None:
+    outputs = [b"0\n", b"91\n"]
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def runner(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, outputs.pop(0), b"")
+
+    detector = YellowLevelButtonDetector(
+        tmp_path,
+        tesseract_runner=runner,
+        tesseract_executable="tesseract-test",
+    )
+
+    result = detector.detect(_capture("home_screen.png"))
+
+    assert result.level == 91
+    assert len(calls) == 2
+    command, kwargs = calls[0]
+    assert command == [
+        "tesseract-test",
+        "stdin",
+        "stdout",
+        "--psm",
+        "7",
+        "-c",
+        "tessedit_char_whitelist=0123456789",
+    ]
+    processed = Image.open(io.BytesIO(kwargs["input"]))  # type: ignore[arg-type]
+    assert processed.size == (
+        result.ocr_crop_size[0] * 4,
+        result.ocr_crop_size[1] * 4,
+    )
+    populated_values = {
+        value for value, count in enumerate(processed.histogram()) if count
+    }
+    assert populated_values <= {0, 255}
 
 def test_saves_all_candidates_when_yellow_button_detection_fails(
     tmp_path: Path,

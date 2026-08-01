@@ -263,6 +263,28 @@ def test_start_captures_classifies_and_logs_level_entry(tmp_path: Path) -> None:
     assert (tmp_path / "letter-wheel-geometry.json").exists()
 
 
+def test_starting_on_level_screen_continues_solving_without_home_button(
+    tmp_path: Path,
+) -> None:
+    android = FakeAndroid()
+    home_detector = FakeHomeLevelButtonDetector()
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        home_level_button_detector=home_detector,
+    )
+
+    runtime.start(max_levels=1)
+
+    assert home_detector.calls == 0
+    assert android.taps == []
+    assert len(android.swipes) == 2
+    assert runtime.level_number_recognizer.calls == 1  # type: ignore[attr-defined]
+
 def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     android = FakeAndroid()
     classifier = FakeClassifier(
