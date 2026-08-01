@@ -185,3 +185,33 @@ def test_missing_executable_is_typed_without_retry() -> None:
     with pytest.raises(AdbExecutableNotFoundError):
         client(runner, retries=3).discover_devices()
     assert calls == 1
+
+def test_swipe_emits_one_continuous_multi_point_motion_gesture() -> None:
+    calls: list[list[str]] = []
+    sleeps: list[float] = []
+
+    def runner(command: list[str], **kwargs: object) -> Any:
+        calls.append(command)
+        if "devices" in command:
+            return result("List of devices attached\na device\n")
+        return result()
+
+    adapter = AdbClient(
+        Settings(),
+        configure_logging(stream=io.StringIO()),
+        runner=runner,
+        sleeper=sleeps.append,
+    )
+    adapter.select_device()
+    adapter.swipe(
+        SwipePath(
+            (PixelPoint(10, 20), PixelPoint(30, 40), PixelPoint(50, 60)),
+            600,
+        )
+    )
+    assert [call[-4:] for call in calls[1:]] == [
+        ["motionevent", "DOWN", "10", "20"],
+        ["motionevent", "MOVE", "30", "40"],
+        ["motionevent", "UP", "50", "60"],
+    ]
+    assert sleeps == [0.3, 0.3]

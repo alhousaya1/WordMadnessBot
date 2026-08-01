@@ -103,19 +103,28 @@ class AdbClient(AndroidPort):
         self._run_text(["shell", "input", "tap", str(point.x), str(point.y)], retry=False)
 
     def swipe(self, path: SwipePath) -> None:
-        start, end = path.points[0], path.points[-1]
+        interval = path.duration_ms / 1000 / (len(path.points) - 1)
+        first = path.points[0]
         self._run_text(
-            [
-                "shell",
-                "input",
-                "swipe",
-                str(start.x),
-                str(start.y),
-                str(end.x),
-                str(end.y),
-                str(path.duration_ms),
-            ],
+            ["shell", "input", "motionevent", "DOWN", str(first.x), str(first.y)],
             retry=False,
+        )
+        for point in path.points[1:-1]:
+            self._sleeper(interval)
+            self._run_text(
+                ["shell", "input", "motionevent", "MOVE", str(point.x), str(point.y)],
+                retry=False,
+            )
+        self._sleeper(interval)
+        last = path.points[-1]
+        self._run_text(
+            ["shell", "input", "motionevent", "UP", str(last.x), str(last.y)],
+            retry=False,
+        )
+        self._logger.info(
+            "adb.swipe.executed",
+            duration_ms=path.duration_ms,
+            point_count=len(path.points),
         )
 
     def press_back(self) -> None:

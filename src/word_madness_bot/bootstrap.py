@@ -13,8 +13,14 @@ from word_madness_bot.application.ports.android import AndroidPort
 from word_madness_bot.application.ports.levels import LevelRepository
 from word_madness_bot.application.recovery import RecoveryStrategy, RetryPolicy, TimeoutPolicy
 from word_madness_bot.application.solution_planning import (
+    LevelSolutionPlan,
     LevelSolutionPlanner,
     save_level_solution,
+)
+from word_madness_bot.application.word_execution import (
+    ImageDifferenceWordAcceptanceVerifier,
+    SingleWordExecutor,
+    WordAcceptanceVerifier,
 )
 from word_madness_bot.config.logging import StructuredLogger, configure_logging
 from word_madness_bot.config.settings import Settings
@@ -24,6 +30,7 @@ from word_madness_bot.domain.errors import (
     ScreenshotError,
     WheelGeometryDetectionError,
     WordMadnessError,
+    WordNotAcceptedError,
 )
 from word_madness_bot.domain.geometry import PixelPoint
 from word_madness_bot.domain.models import ScreenCapture
@@ -83,6 +90,7 @@ class ApplicationRuntime:
     letter_recognizer: WheelLetterRecognitionPort
     level_number_recognizer: LevelNumberRecognitionPort
     solution_planner: LevelSolutionPlanner
+    word_executor: SingleWordExecutor
     clock: Clock = field(default=time.monotonic, repr=False)
     sleeper: Sleeper = field(default=time.sleep, repr=False)
     _started: bool = False
@@ -160,7 +168,8 @@ class ApplicationRuntime:
             )
             geometry = self._detect_wheel_geometry(capture)
             recognition = self._recognize_letters(capture, geometry)
-            self._plan_level_solution(capture, geometry, recognition)
+            plan = self._plan_level_solution(capture, geometry, recognition)
+            self._execute_first_word(capture, plan)
         self._started = True
         self.logger.info("runtime.started", dry_run=dry_run)
 
@@ -248,7 +257,7 @@ class ApplicationRuntime:
         capture: ScreenCapture,
         geometry: LetterWheelGeometry,
         recognition: WheelLetterRecognition,
-    ) -> None:
+    ) -> LevelSolutionPlan:
         started = self.clock()
         try:
             level_number = self.level_number_recognizer.recognize(capture)
@@ -272,6 +281,43 @@ class ApplicationRuntime:
             planning_duration_seconds=self.clock() - started,
             output_filename=str(output_path),
         )
+        return plan
+
+    def _execute_first_word(
+        self,
+        before: ScreenCapture,
+        plan: LevelSolutionPlan,
+    ) -> None:
+        try:
+            result = self.word_executor.execute(
+                plan, before, self.settings.debug_directory
+            )
+        except WordMadnessError as error:
+            self.logger.exception(
+                "runtime.word.execution_failed",
+                error=str(error),
+            )
+            raise
+        coordinates = [
+            {"x": point.x, "y": point.y} for point in result.coordinates
+        ]
+        self.logger.info(
+            "runtime.word.executed",
+            executed_word=result.word,
+            swipe_duration_ms=result.duration_ms,
+            swipe_coordinates=coordinates,
+            acceptance_verification=result.acceptance.accepted,
+            changed_pixel_ratio=result.acceptance.changed_pixel_ratio,
+            elapsed_execution_seconds=result.elapsed_seconds,
+        )
+        if not result.acceptance.accepted:
+            self.logger.error(
+                "runtime.word.not_accepted",
+                executed_word=result.word,
+                acceptance_verification=False,
+                changed_pixel_ratio=result.acceptance.changed_pixel_ratio,
+            )
+            raise WordNotAcceptedError(result.word)
 
     def _classify(self, capture: ScreenCapture) -> ScreenClassification:
         started = self.clock()
@@ -330,6 +376,7 @@ def build_runtime(
     wheel_detector: WheelGeometryDetector | None = None,
     letter_recognizer: WheelLetterRecognitionPort | None = None,
     level_number_recognizer: LevelNumberRecognitionPort | None = None,
+    word_acceptance_verifier: WordAcceptanceVerifier | None = None,
     clock: Clock = time.monotonic,
     sleeper: Sleeper = time.sleep,
 ) -> ApplicationRuntime:
@@ -354,6 +401,12 @@ def build_runtime(
         letter_recognizer=letter_recognizer or WheelLetterRecognizer(),
         level_number_recognizer=level_number_recognizer or LevelNumberRecognizer(),
         solution_planner=LevelSolutionPlanner(levels, planner),
+        word_executor=SingleWordExecutor(
+            android,
+            word_acceptance_verifier or ImageDifferenceWordAcceptanceVerifier(),
+            sleeper=sleeper,
+            clock=clock,
+        ),
         clock=clock,
         sleeper=sleeper,
     )
