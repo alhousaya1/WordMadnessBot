@@ -5,7 +5,7 @@ from importlib.resources import files
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from word_madness_bot.domain.geometry import PixelRect, ScreenSize
 from word_madness_bot.domain.models import ScreenCapture
@@ -84,4 +84,31 @@ def test_supplied_daily_dash_screenshot_regression() -> None:
 
 def test_returns_unknown_without_matching_evidence() -> None:
     result = ScreenClassifier().classify(_capture())
+    assert result.screen is ScreenType.UNKNOWN
+
+
+def test_completion_home_is_detected_from_yellow_level_button() -> None:
+    image = Image.new("RGB", (1000, 2000), (30, 35, 55))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((250, 1220, 750, 1380), radius=70, fill=(245, 190, 20))
+    draw.text((420, 1280), "Level 92", fill=(255, 255, 255))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    capture = ScreenCapture(output.getvalue(), ScreenSize(1000, 2000))
+
+    result = ScreenClassifier().classify(capture)
+
+    assert result.screen is ScreenType.HOME_SCREEN
+    assert result.start_button == PixelRect(250, 1220, 501, 161)
+    assert result.start_button_confidence == 1.0
+
+
+def test_completion_home_requires_a_large_button_shaped_yellow_region() -> None:
+    image = Image.new("RGB", (1000, 2000), (30, 35, 55))
+    ImageDraw.Draw(image).ellipse((450, 1250, 550, 1350), fill=(245, 190, 20))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+
+    result = ScreenClassifier().classify(ScreenCapture(output.getvalue(), ScreenSize(1000, 2000)))
+
     assert result.screen is ScreenType.UNKNOWN

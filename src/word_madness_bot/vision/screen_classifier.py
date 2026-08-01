@@ -65,22 +65,26 @@ class ScreenClassifier:
     def classify(self, capture: ScreenCapture) -> ScreenClassification:
         """Return the strongest supported screen and matched action control."""
         source = _decode_png(capture.data)
-        popup_confidence, _ = _match(
-            source, self._templates[ScreenType.DAILY_DASH_POPUP]
-        )
+        popup_confidence, _ = _match(source, self._templates[ScreenType.DAILY_DASH_POPUP])
         if popup_confidence >= self.minimum_confidence:
             confidence, screen = popup_confidence, ScreenType.DAILY_DASH_POPUP
         else:
-            home_confidence, _ = _match(
-                source, self._templates[ScreenType.HOME_SCREEN]
-            )
-            level_confidence, _ = _match(
-                source, self._templates[ScreenType.LEVEL_SCREEN]
-            )
+            home_confidence, _ = _match(source, self._templates[ScreenType.HOME_SCREEN])
+            level_confidence, _ = _match(source, self._templates[ScreenType.LEVEL_SCREEN])
             if home_confidence >= level_confidence:
                 confidence, screen = home_confidence, ScreenType.HOME_SCREEN
             else:
                 confidence, screen = level_confidence, ScreenType.LEVEL_SCREEN
+        completion_button = None
+        if confidence < self.minimum_confidence:
+            completion_button = _find_yellow_level_button(_decode_png_color(capture.data))
+            if completion_button is not None:
+                return ScreenClassification(
+                    ScreenType.HOME_SCREEN,
+                    1.0,
+                    start_button=completion_button,
+                    start_button_confidence=1.0,
+                )
         if confidence < self.minimum_confidence:
             return ScreenClassification(ScreenType.UNKNOWN, confidence)
 
@@ -110,6 +114,59 @@ def _decode_png(data: bytes) -> Any:
     if image is None:
         raise ImageDecodeError("Unable to decode screenshot for screen classification")
     return image
+
+
+def _decode_png_color(data: bytes) -> Any:
+    encoded = np.frombuffer(data, dtype=np.uint8)
+    image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ImageDecodeError("Unable to decode screenshot for screen classification")
+    return image
+
+
+def _find_yellow_level_button(source: Any) -> PixelRect | None:
+    height, width = source.shape[:2]
+    left = round(width * 0.15)
+    right = round(width * 0.85)
+    top = round(height * 0.52)
+    bottom = round(height * 0.78)
+    search = source[top:bottom, left:right]
+    hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(
+        hsv,
+        np.array((15, 100, 120), dtype=np.uint8),
+        np.array((42, 255, 255), dtype=np.uint8),
+    )
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates: list[tuple[float, PixelRect]] = []
+    for contour in contours:
+        x, y, candidate_width, candidate_height = cv2.boundingRect(contour)
+        if candidate_height == 0:
+            continue
+        aspect_ratio = candidate_width / candidate_height
+        fill_ratio = cv2.contourArea(contour) / (candidate_width * candidate_height)
+        if (
+            candidate_width >= round(width * 0.18)
+            and round(height * 0.035) <= candidate_height <= round(height * 0.14)
+            and aspect_ratio >= 2.0
+            and fill_ratio >= 0.55
+        ):
+            candidates.append(
+                (
+                    float(cv2.contourArea(contour)),
+                    PixelRect(
+                        left + int(x),
+                        top + int(y),
+                        int(candidate_width),
+                        int(candidate_height),
+                    ),
+                )
+            )
+    if not candidates:
+        return None
+    return max(candidates, key=lambda candidate: candidate[0])[1]
 
 
 def _load_template(name: str) -> Any:
