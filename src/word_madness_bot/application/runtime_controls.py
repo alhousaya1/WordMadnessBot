@@ -79,7 +79,11 @@ class CompletionOverlayDetector:
             round(height * 0.10) : round(height * 0.88),
             round(width * 0.10) : round(width * 0.78),
         ]
-        return _has_back_arrow(_back_arrow_region(gray)) and _text_row_count(content) >= 4
+        return (
+            _has_back_arrow(_back_arrow_region(gray))
+            and _green_switch_count(image) >= 2
+            and _text_row_count(content) >= 4
+        )
 
 
 def _has_text_line(region: Any, *, minimum_components: int) -> bool:
@@ -115,6 +119,35 @@ def _text_row_count(region: Any) -> int:
         width >= round(region.shape[1] * 0.12) and height <= round(region.shape[0] * 0.12)
         for _, _, width, height in (cv2.boundingRect(contour) for contour in contours)
     )
+
+
+def _green_switch_count(image: Any) -> int:
+    height, width = image.shape[:2]
+    search = image[
+        round(height * 0.10) : round(height * 0.65),
+        round(width * 0.55) : round(width * 0.95),
+    ]
+    hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(
+        hsv,
+        np.array((35, 80, 70), dtype=np.uint8),
+        np.array((95, 255, 255), dtype=np.uint8),
+    )
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    count = 0
+    for contour in contours:
+        _, _, candidate_width, candidate_height = cv2.boundingRect(contour)
+        if candidate_height == 0:
+            continue
+        fill_ratio = cv2.contourArea(contour) / (candidate_width * candidate_height)
+        if (
+            round(width * 0.10) <= candidate_width <= round(width * 0.35)
+            and round(height * 0.025) <= candidate_height <= round(height * 0.10)
+            and candidate_width / candidate_height >= 1.4
+            and fill_ratio >= 0.55
+        ):
+            count += 1
+    return count
 
 
 def _back_arrow_region(gray: Any) -> Any:
