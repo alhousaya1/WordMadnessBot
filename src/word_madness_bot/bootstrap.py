@@ -14,11 +14,8 @@ from word_madness_bot.application.ports.android import AndroidPort
 from word_madness_bot.application.ports.levels import LevelRepository
 from word_madness_bot.application.recovery import RecoveryStrategy, RetryPolicy, TimeoutPolicy
 from word_madness_bot.application.runtime_controls import (
-    HomeLevelButton,
-    HomeLevelButtonPort,
     PopupCloseButtonPort,
     UpperRightPopupCloseDetector,
-    YellowLevelButtonDetector,
 )
 from word_madness_bot.application.solution_planning import (
     LevelSolutionPlan,
@@ -40,7 +37,7 @@ from word_madness_bot.domain.errors import (
     WordMadnessError,
     WordNotAcceptedError,
 )
-from word_madness_bot.domain.geometry import PixelPoint
+from word_madness_bot.domain.geometry import NormalizedPoint, PixelPoint
 from word_madness_bot.domain.models import ScreenCapture
 from word_madness_bot.gameplay.ads import AdvertisementPolicy
 from word_madness_bot.gameplay.swipe_generator import SwipePathPlanner
@@ -72,6 +69,7 @@ AndroidFactory = Callable[[Settings, StructuredLogger], AndroidPort]
 LevelFactory = Callable[[], LevelRepository]
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
+START_LEVEL_POINT = NormalizedPoint(0.500, 0.654)
 
 
 class RuntimeScreenClassifier(Protocol):
@@ -99,7 +97,6 @@ class ApplicationRuntime:
     level_number_recognizer: LevelNumberRecognitionPort
     solution_planner: LevelSolutionPlanner
     level_executor: LevelExecutor
-    home_level_button_detector: HomeLevelButtonPort
     clock: Clock = field(default=time.monotonic, repr=False)
     sleeper: Sleeper = field(default=time.sleep, repr=False)
     _started: bool = False
@@ -153,13 +150,28 @@ class ApplicationRuntime:
                 )
 
             while max_levels is None or completed_levels < max_levels:
-                button = self._detect_home_level_button(capture)
-                capture, classification = self._enter_level(button)
+                point = START_LEVEL_POINT.to_pixels(capture.size)
+                self.logger.info(
+                    "runtime.start_level.detected",
+                    button_left=point.x,
+                    button_top=point.y,
+                    button_width=0,
+                    button_height=0,
+                    ocr_crop_width=0,
+                    ocr_crop_height=0,
+                    template_confidence=None,
+                )
+                capture, classification = self._enter_level(point)
                 self.logger.info(
                     "runtime.level.entered",
                     template_confidence=classification.confidence,
                 )
-                capture = self._solve_detected_level(capture, button.level)
+                level_number = self.level_number_recognizer.recognize(capture)
+                self.logger.info(
+                    "runtime.level.detected",
+                    detected_level=level_number,
+                )
+                capture = self._solve_detected_level(capture, level_number)
                 completed_levels += 1
         self._started = True
         self.logger.info("runtime.started", dry_run=dry_run)
@@ -180,32 +192,10 @@ class ApplicationRuntime:
         self.sleeper(10.0)
         return self._execute_level(capture, plan)
 
-    def _detect_home_level_button(self, capture: ScreenCapture) -> HomeLevelButton:
-        region = self.home_level_button_detector.locate(capture)
-        crop_width, crop_height = self.home_level_button_detector.ocr_crop_size(region)
-        self.logger.info(
-            "runtime.start_level.detected",
-            button_left=region.left,
-            button_top=region.top,
-            button_width=region.width,
-            button_height=region.height,
-            ocr_crop_width=crop_width,
-            ocr_crop_height=crop_height,
-            template_confidence=None,
-        )
-        button = self.home_level_button_detector.recognize_level(capture, region)
-        self.logger.info("runtime.level.detected", detected_level=button.level)
-        return button
-
     def _enter_level(
         self,
-        button: HomeLevelButton,
+        point: PixelPoint,
     ) -> tuple[ScreenCapture, ScreenClassification]:
-        region = button.region
-        point = PixelPoint(
-            region.left + region.width // 2,
-            region.top + region.height // 2,
-        )
         while True:
             self.logger.info("runtime.start_level.tap", tap_x=point.x, tap_y=point.y)
             self.android.tap(point)
@@ -423,7 +413,6 @@ def build_runtime(
     letter_recognizer: WheelLetterRecognitionPort | None = None,
     level_number_recognizer: LevelNumberRecognitionPort | None = None,
     word_acceptance_verifier: WordAcceptanceVerifier | None = None,
-    home_level_button_detector: HomeLevelButtonPort | None = None,
     popup_close_button_detector: PopupCloseButtonPort | None = None,
     clock: Clock = time.monotonic,
     sleeper: Sleeper = time.sleep,
@@ -462,10 +451,6 @@ def build_runtime(
             classifier,
             popup_close_button_detector or UpperRightPopupCloseDetector(),
             sleeper=sleeper,
-        ),
-        home_level_button_detector=(
-            home_level_button_detector
-            or YellowLevelButtonDetector(settings.debug_directory)
         ),
         clock=clock,
         sleeper=sleeper,

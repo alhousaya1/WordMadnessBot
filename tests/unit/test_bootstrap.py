@@ -10,14 +10,12 @@ from typing import cast
 import pytest
 
 from word_madness_bot.application.ports.android import AndroidPort
-from word_madness_bot.application.runtime_controls import HomeLevelButton
 from word_madness_bot.application.word_execution import AcceptanceResult
 from word_madness_bot.bootstrap import ApplicationRuntime, build_runtime
 from word_madness_bot.config.logging import StructuredLogger, configure_logging
 from word_madness_bot.config.settings import Settings
 from word_madness_bot.domain.errors import (
     OcrError,
-    RuntimeNavigationError,
     ScreenshotError,
     WheelGeometryDetectionError,
     WordNotAcceptedError,
@@ -136,26 +134,6 @@ class FakeLevelNumberRecognizer:
         return self.number
 
 
-class FakeHomeLevelButtonDetector:
-    def __init__(self, *, fail: bool = False, level: int = 1) -> None:
-        self.fail = fail
-        self.level = level
-        self.calls = 0
-
-    def locate(self, capture: ScreenCapture) -> PixelRect:
-        self.calls += 1
-        if self.fail:
-            raise RuntimeNavigationError("Yellow level button was not detected")
-        return PixelRect(200, 600, 400, 120)
-
-    def recognize_level(
-        self, capture: ScreenCapture, region: PixelRect
-    ) -> HomeLevelButton:
-        return HomeLevelButton(region, self.level, self.ocr_crop_size(region))
-
-    def ocr_crop_size(self, region: PixelRect) -> tuple[int, int]:
-        return region.width - 16, region.height - 20
-
 class FakePopupCloseDetector:
     def detect(self, capture: ScreenCapture) -> PixelRect | None:
         return None
@@ -201,7 +179,6 @@ def _build(
     wheel_detector: WheelGeometryDetector | None = None,
     letter_recognizer: WheelLetterRecognitionPort | None = None,
     acceptance_verifier: FakeAcceptanceVerifier | None = None,
-    home_level_button_detector: FakeHomeLevelButtonDetector | None = None,
 ) -> ApplicationRuntime:
     return build_runtime(
         Settings(debug_directory=directory),
@@ -215,9 +192,6 @@ def _build(
         letter_recognizer=letter_recognizer or FakeLetterRecognizer(),
         level_number_recognizer=FakeLevelNumberRecognizer(),
         word_acceptance_verifier=acceptance_verifier or FakeAcceptanceVerifier(),
-        home_level_button_detector=(
-            home_level_button_detector or FakeHomeLevelButtonDetector()
-        ),
         popup_close_button_detector=FakePopupCloseDetector(),
         clock=clock,
         sleeper=(lambda _: None) if sleeper is None else sleeper,
@@ -267,7 +241,6 @@ def test_starting_on_level_screen_continues_solving_without_home_button(
     tmp_path: Path,
 ) -> None:
     android = FakeAndroid()
-    home_detector = FakeHomeLevelButtonDetector()
     runtime = _build(
         android,
         FakeClassifier(
@@ -275,12 +248,10 @@ def test_starting_on_level_screen_continues_solving_without_home_button(
             ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
         ),
         tmp_path,
-        home_level_button_detector=home_detector,
     )
 
     runtime.start(max_levels=1)
 
-    assert home_detector.calls == 0
     assert android.taps == []
     assert len(android.swipes) == 2
     assert runtime.level_number_recognizer.calls == 1  # type: ignore[attr-defined]
@@ -306,7 +277,7 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
         sleeper=sleeps.append,
     )
     runtime.start(max_levels=1)
-    assert android.taps == [PixelPoint(400, 660)]
+    assert android.taps == [PixelPoint(540, 1569)]
     assert sleeps == [3.0, 10.0, 1.5, 0.5, 1.5, 0.5, 2.0]
     assert android.captures == 8
     assert classifier.calls == 3
@@ -314,12 +285,12 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     detected_index = output.index('"event": "runtime.start_level.detected"')
     level_index = output.index('"event": "runtime.level.detected"')
     tap_index = output.index('"event": "runtime.start_level.tap"')
-    assert detected_index < level_index < tap_index
-    assert '"button_left": 200' in output
-    assert '"button_width": 400' in output
-    assert '"button_height": 120' in output
-    assert '"ocr_crop_width": 384' in output
-    assert '"ocr_crop_height": 100' in output
+    assert detected_index < tap_index < level_index
+    assert '"button_left": 540' in output
+    assert '"button_width": 0' in output
+    assert '"button_height": 0' in output
+    assert '"ocr_crop_width": 0' in output
+    assert '"ocr_crop_height": 0' in output
     assert '"event": "runtime.level.entered"' in output
     assert '"event": "runtime.wheel.detected"' in output
     assert '"center_x": 540' in output
@@ -349,21 +320,10 @@ def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     sleeps: list[float] = []
     runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
     runtime.start(max_levels=1)
-    assert android.taps == [PixelPoint(100, 40), PixelPoint(400, 660)]
+    assert android.taps == [PixelPoint(100, 40), PixelPoint(540, 1569)]
     assert sleeps == [0.5, 3.0, 10.0, 1.5, 0.5, 1.5, 0.5, 2.0]
     assert android.captures == 9
     assert classifier.calls == 4
-
-
-def test_missing_yellow_level_button_raises(tmp_path: Path) -> None:
-    runtime = _build(
-        FakeAndroid(),
-        FakeClassifier(ScreenClassification(ScreenType.HOME_SCREEN, 0.97)),
-        tmp_path,
-        home_level_button_detector=FakeHomeLevelButtonDetector(fail=True),
-    )
-    with pytest.raises(RuntimeNavigationError, match="Yellow level button"):
-        runtime.start(max_levels=1)
 
 
 def test_entry_retries_every_three_seconds_until_level_appears(tmp_path: Path) -> None:
@@ -378,7 +338,7 @@ def test_entry_retries_every_three_seconds_until_level_appears(tmp_path: Path) -
 
     _build(android, classifier, tmp_path, sleeper=sleeps.append).start(max_levels=1)
 
-    assert android.taps == [PixelPoint(400, 660), PixelPoint(400, 660)]
+    assert android.taps == [PixelPoint(540, 1569), PixelPoint(540, 1569)]
     assert sleeps[:3] == [3.0, 3.0, 10.0]
 
 def test_capture_failure_is_logged_and_raised(tmp_path: Path) -> None:
@@ -473,4 +433,4 @@ def test_completed_level_automatically_starts_the_next_level(tmp_path: Path) -> 
     runtime.start(max_levels=2)
 
     assert len(android.swipes) == 4
-    assert android.taps == [PixelPoint(400, 660), PixelPoint(400, 660)]
+    assert android.taps == [PixelPoint(540, 1569), PixelPoint(540, 1569)]
