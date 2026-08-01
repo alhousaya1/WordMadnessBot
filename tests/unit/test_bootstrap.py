@@ -151,11 +151,17 @@ class FakeClassifier:
     def __init__(self, *results: ScreenClassification) -> None:
         default = ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99)
         self.results = iter(results or (default,))
+        self.fallback = ScreenClassification(
+            ScreenType.HOME_SCREEN,
+            0.99,
+            start_button=PixelRect(200, 600, 400, 120),
+            start_button_confidence=0.99,
+        )
         self.calls = 0
 
     def classify(self, capture: ScreenCapture) -> ScreenClassification:
         self.calls += 1
-        return next(self.results)
+        return next(self.results, self.fallback)
 
 
 def _build(
@@ -206,9 +212,9 @@ def test_start_captures_classifies_and_logs_level_entry(tmp_path: Path) -> None:
         tmp_path,
         logger=configure_logging(name="test.capture", stream=stream),
     )
-    runtime.start()
+    runtime.start(max_levels=1)
     assert (tmp_path / "screenshot-1.png").read_bytes() == PNG
-    assert (android.selected, android.verified, android.captures) == (1, 1, 3)
+    assert (android.selected, android.verified, android.captures) == (1, 1, 7)
     output = stream.getvalue()
     assert '"detected_screen": "level_screen"' in output
     assert '"template_confidence": 0.97' in output
@@ -242,11 +248,11 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
         logger=configure_logging(name="test.home", stream=stream),
         sleeper=sleeps.append,
     )
-    runtime.start()
+    runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(400, 660)]
-    assert sleeps == [2.0, 1.5, 0.5]
-    assert android.captures == 4
-    assert classifier.calls == 2
+    assert sleeps == [2.0, 1.5, 0.5, 1.5, 0.5, 2.0]
+    assert android.captures == 8
+    assert classifier.calls == 3
     assert (tmp_path / "screenshot-2.png").exists()
     output = stream.getvalue()
     assert '"event": "runtime.start_level.detected"' in output
@@ -280,11 +286,11 @@ def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     )
     sleeps: list[float] = []
     runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
-    runtime.start()
+    runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(100, 40), PixelPoint(400, 660)]
-    assert sleeps == [0.5, 2.0, 1.5, 0.5]
-    assert android.captures == 5
-    assert classifier.calls == 3
+    assert sleeps == [0.5, 2.0, 1.5, 0.5, 1.5, 0.5, 2.0]
+    assert android.captures == 9
+    assert classifier.calls == 4
     assert (tmp_path / "screenshot-3.png").exists()
 
 
@@ -297,7 +303,7 @@ def test_missing_start_button_logs_and_raises(tmp_path: Path) -> None:
         logger=configure_logging(name="test.navigation.failure", stream=stream),
     )
     with pytest.raises(RuntimeNavigationError, match="start_level_button_not_found"):
-        runtime.start()
+        runtime.start(max_levels=1)
     output = stream.getvalue()
     assert '"event": "runtime.level.transition_failed"' in output
     assert '"reason": "start_level_button_not_found"' in output
@@ -326,7 +332,7 @@ def test_capture_failure_is_logged_and_raised(tmp_path: Path) -> None:
         logger=configure_logging(name="test.failure", stream=stream),
     )
     with pytest.raises(ScreenshotError):
-        runtime.start()
+        runtime.start(max_levels=1)
     assert '"event": "runtime.screenshot.failed"' in stream.getvalue()
 
 
@@ -340,7 +346,7 @@ def test_wheel_detection_failure_logs_and_raises(tmp_path: Path) -> None:
         wheel_detector=FakeWheelDetector(fail=True),
     )
     with pytest.raises(WheelGeometryDetectionError, match="wheel missing"):
-        runtime.start()
+        runtime.start(max_levels=1)
     output = stream.getvalue()
     assert '"event": "runtime.wheel.detection_failed"' in output
     assert '"error": "wheel missing"' in output
@@ -356,7 +362,7 @@ def test_letter_recognition_failure_logs_and_raises(tmp_path: Path) -> None:
         letter_recognizer=FakeLetterRecognizer(fail=True),
     )
     with pytest.raises(OcrError, match="letters missing"):
-        runtime.start()
+        runtime.start(max_levels=1)
     assert '"event": "runtime.letters.recognition_failed"' in stream.getvalue()
 
 
@@ -382,7 +388,30 @@ def test_rejected_first_word_logs_and_stops(tmp_path: Path) -> None:
         acceptance_verifier=FakeAcceptanceVerifier(accepted=False),
     )
     with pytest.raises(WordNotAcceptedError, match="AB"):
-        runtime.start()
+        runtime.start(max_levels=1)
     assert len(android.swipes) == 1
     assert (tmp_path / "swipe.json").exists()
     assert '"event": "runtime.word.not_accepted"' in stream.getvalue()
+
+
+def test_completed_level_automatically_starts_the_next_level(tmp_path: Path) -> None:
+    home = ScreenClassification(
+        ScreenType.HOME_SCREEN,
+        0.99,
+        start_button=PixelRect(200, 600, 400, 120),
+        start_button_confidence=0.99,
+    )
+    classifier = FakeClassifier(
+        ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+        home,
+        home,
+        ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+        home,
+    )
+    android = FakeAndroid()
+    runtime = _build(android, classifier, tmp_path)
+
+    runtime.start(max_levels=2)
+
+    assert len(android.swipes) == 4
+    assert android.taps == [PixelPoint(400, 660)]

@@ -122,8 +122,9 @@ class WordExecutionError(WorkflowError):
 class WordNotAcceptedError(WordExecutionError):
     """Raised when the attempted word does not change the level board."""
 
-    def __init__(self, word: str) -> None:
+    def __init__(self, word: str, changed_pixel_ratio: float = 0.0) -> None:
         self.word = word
+        self.changed_pixel_ratio = changed_pixel_ratio
         super().__init__(f"Word was not accepted: {word}")
 
 
