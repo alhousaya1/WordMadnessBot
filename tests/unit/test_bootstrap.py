@@ -141,7 +141,7 @@ class FakeAcceptanceVerifier:
         self.calls = 0
 
     def verify(
-        self, before: ScreenCapture, after: ScreenCapture
+        self, before: ScreenCapture, after: ScreenCapture, confirmation: ScreenCapture
     ) -> AcceptanceResult:
         self.calls += 1
         return AcceptanceResult(self.accepted, 0.01 if self.accepted else 0.0, 1.0)
@@ -208,7 +208,7 @@ def test_start_captures_classifies_and_logs_level_entry(tmp_path: Path) -> None:
     )
     runtime.start()
     assert (tmp_path / "screenshot-1.png").read_bytes() == PNG
-    assert (android.selected, android.verified, android.captures) == (1, 1, 2)
+    assert (android.selected, android.verified, android.captures) == (1, 1, 3)
     output = stream.getvalue()
     assert '"detected_screen": "level_screen"' in output
     assert '"template_confidence": 0.97' in output
@@ -244,8 +244,8 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     )
     runtime.start()
     assert android.taps == [PixelPoint(400, 660)]
-    assert sleeps == [2.0, 1.5]
-    assert android.captures == 3
+    assert sleeps == [2.0, 1.5, 0.5]
+    assert android.captures == 4
     assert classifier.calls == 2
     assert (tmp_path / "screenshot-2.png").exists()
     output = stream.getvalue()
@@ -282,8 +282,8 @@ def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
     runtime.start()
     assert android.taps == [PixelPoint(100, 40), PixelPoint(400, 660)]
-    assert sleeps == [0.5, 2.0, 1.5]
-    assert android.captures == 4
+    assert sleeps == [0.5, 2.0, 1.5, 0.5]
+    assert android.captures == 5
     assert classifier.calls == 3
     assert (tmp_path / "screenshot-3.png").exists()
 
