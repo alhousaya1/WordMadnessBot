@@ -64,11 +64,20 @@ class YellowLevelButtonDetector:
 
     def detect(self, capture: ScreenCapture) -> HomeLevelButton:
         image = _decode_color(capture)
+        region = self._locate(image)
+        level = self._read_level(image, region)
+        return HomeLevelButton(region, level)
+
+    def locate(self, capture: ScreenCapture) -> PixelRect:
+        """Locate the button independently of its changing text."""
+        return self._locate(_decode_color(capture))
+
+    def _locate(self, image: Any) -> PixelRect:
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(
             hsv,
-            np.array((15, 120, 150), dtype=np.uint8),
-            np.array((40, 255, 255), dtype=np.uint8),
+            np.array((10, 70, 120), dtype=np.uint8),
+            np.array((45, 255, 255), dtype=np.uint8),
         )
         height, width = mask.shape
         kernel_size = max(3, round(min(width, height) * 0.008))
@@ -78,30 +87,36 @@ class YellowLevelButtonDetector:
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         candidates: list[tuple[float, PixelRect]] = []
+        screen_area = width * height
         for contour in contours:
             left, top, button_width, button_height = cv2.boundingRect(contour)
+            if button_height <= 0:
+                continue
             aspect = button_width / button_height
-            area_ratio = button_width * button_height / (width * height)
-            if (
-                top >= height * 0.45
-                and 2.5 <= aspect <= 7.0
-                and 0.02 <= area_ratio <= 0.15
-                and button_width >= width * 0.35
+            area_ratio = button_width * button_height / screen_area
+            width_ratio = button_width / width
+            height_ratio = button_height / height
+            fill_ratio = cv2.contourArea(contour) / (button_width * button_height)
+            if not (
+                top >= height * 0.35
+                and 2.0 <= aspect <= 10.0
+                and 0.01 <= area_ratio <= 0.25
+                and 0.25 <= width_ratio <= 0.95
+                and 0.025 <= height_ratio <= 0.20
+                and fill_ratio >= 0.70
             ):
-                fill_ratio = cv2.contourArea(contour) / (button_width * button_height)
-                if not 0.80 <= fill_ratio < 0.995:
-                    continue
-                candidates.append(
-                    (
-                        fill_ratio * button_width * button_height,
-                        PixelRect(left, top, button_width, button_height),
-                    )
-                )
+                continue
+            horizontal_center = left + button_width / 2
+            center_offset = abs(horizontal_center - width / 2) / width
+            score = (
+                button_width * button_height * fill_ratio * (1.0 - center_offset)
+            )
+            candidates.append(
+                (score, PixelRect(left, top, button_width, button_height))
+            )
         if not candidates:
             raise RuntimeNavigationError("Yellow level button was not detected")
-        region = max(candidates, key=lambda item: item[0])[1]
-        level = self._read_level(image, region)
-        return HomeLevelButton(region, level)
+        return max(candidates, key=lambda item: item[0])[1]
 
     def _read_level(self, image: Any, region: PixelRect) -> int:
         inset_x = max(2, round(region.width * 0.02))
