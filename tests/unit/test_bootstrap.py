@@ -294,6 +294,10 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     tap_index = output.index('"event": "runtime.start_level.tap"')
     assert detected_index < level_index < tap_index
     assert '"button_left": 200' in output
+    assert '"button_width": 400' in output
+    assert '"button_height": 120' in output
+    assert '"ocr_crop_width": 384' in output
+    assert '"ocr_crop_height": 100' in output
     assert '"event": "runtime.level.entered"' in output
     assert '"event": "runtime.wheel.detected"' in output
     assert '"center_x": 540' in output
