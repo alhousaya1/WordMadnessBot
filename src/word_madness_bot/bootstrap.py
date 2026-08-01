@@ -450,6 +450,7 @@ def build_runtime(
             single_word_executor,
             classifier,
             popup_close_button_detector or UpperRightPopupCloseDetector(),
+            swipe_duration_ms=settings.swipe_duration_ms,
             sleeper=sleeper,
         ),
         clock=clock,

@@ -46,12 +46,16 @@ class WordExecutor:
     def __init__(self, accepted: tuple[bool, ...]) -> None:
         self.accepted = iter(accepted)
         self.words: list[str] = []
+        self.durations: list[int] = []
+        self.coordinates: list[tuple[PixelPoint, ...]] = []
 
     def execute(
         self, plan: LevelSolutionPlan, before: ScreenCapture, debug_directory: Path
     ) -> WordExecutionResult:
         solution = plan.solutions[0]
         self.words.append(solution.word)
+        self.durations.append(solution.duration_ms)
+        self.coordinates.append(solution.coordinates)
         accepted = next(self.accepted)
         return WordExecutionResult(
             solution.word,
@@ -86,11 +90,31 @@ def test_executes_every_word_then_waits_until_home(tmp_path: Path) -> None:
     result = executor.execute(_plan(), CAPTURE, tmp_path)
 
     assert words.words == ["AB", "CAB"]
+    assert words.durations == [500, 500]
+    assert words.coordinates == [
+        (PixelPoint(1, 2), PixelPoint(3, 4)),
+        (PixelPoint(5, 6),),
+    ]
     assert [word.word for word in result.words] == ["AB", "CAB"]
     assert result.home_capture is CAPTURE
     assert android.captures == 3
     assert sleeps == [2.0, 0.5]
 
+
+def test_runtime_swipe_duration_is_configurable(tmp_path: Path) -> None:
+    android = Android()
+    words = WordExecutor((True, True))
+    executor = LevelExecutor(
+        android,  # type: ignore[arg-type]
+        words,  # type: ignore[arg-type]
+        Classifier(ScreenType.HOME_SCREEN),
+        swipe_duration_ms=750,
+        sleeper=lambda _: None,
+    )
+
+    executor.execute(_plan(), CAPTURE, tmp_path)
+
+    assert words.durations == [750, 750]
 
 def test_stops_immediately_when_a_word_is_rejected(tmp_path: Path) -> None:
     android = Android()
@@ -106,6 +130,11 @@ def test_stops_immediately_when_a_word_is_rejected(tmp_path: Path) -> None:
         executor.execute(_plan(), CAPTURE, tmp_path)
 
     assert words.words == ["AB", "CAB"]
+    assert words.durations == [500, 500]
+    assert words.coordinates == [
+        (PixelPoint(1, 2), PixelPoint(3, 4)),
+        (PixelPoint(5, 6),),
+    ]
     assert android.captures == 1
 
 class PopupDetector:
