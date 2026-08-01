@@ -1,12 +1,14 @@
 import io
 from pathlib import Path
 
+import pytest
 from PIL import Image, ImageDraw
 
 from word_madness_bot.application.runtime_controls import (
     UpperRightPopupCloseDetector,
     YellowLevelButtonDetector,
 )
+from word_madness_bot.domain.errors import OcrError, RuntimeNavigationError
 from word_madness_bot.domain.geometry import PixelRect, ScreenSize
 from word_madness_bot.domain.models import ScreenCapture
 
@@ -20,14 +22,28 @@ def _capture(name: str) -> ScreenCapture:
     return ScreenCapture(path.read_bytes(), size)
 
 
-def test_detects_yellow_rectangle_and_reads_only_its_level_text() -> None:
-    result = YellowLevelButtonDetector().detect(_capture("home_screen.png"))
+def _image_capture(image: Image.Image) -> ScreenCapture:
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return ScreenCapture(output.getvalue(), ScreenSize(*image.size))
+
+
+def test_detects_yellow_rectangle_and_reads_only_its_level_text(
+    tmp_path: Path,
+) -> None:
+    result = YellowLevelButtonDetector(tmp_path).detect(_capture("home_screen.png"))
 
     assert result.level == 90
     assert (
         result.region.left + result.region.width // 2,
         result.region.top + result.region.height // 2,
-    ) == (720, 2038)
+    ) == (721, 2043)
+    assert result.ocr_crop_size == (858, 158)
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "button_box.png",
+        "home_screen.png",
+        "yellow_mask.png",
+    ]
 
 
 def test_locates_alternate_yellow_button_independently_of_text() -> None:
@@ -39,28 +55,83 @@ def test_locates_alternate_yellow_button_independently_of_text() -> None:
         fill=(235, 180, 45),
     )
     draw.rectangle((390, 1570, 690, 1630), fill=(35, 30, 25))
-    output = io.BytesIO()
-    image.save(output, format="PNG")
-    capture = ScreenCapture(output.getvalue(), ScreenSize(1080, 2400))
 
-    region = YellowLevelButtonDetector().locate(capture)
+    region = YellowLevelButtonDetector().locate(_image_capture(image))
 
-    assert region == PixelRect(180, 1500, 721, 201)
+    assert region == PixelRect(181, 1501, 721, 201)
     assert (
         region.left + region.width // 2,
         region.top + region.height // 2,
-    ) == (540, 1600)
+    ) == (541, 1601)
+
+
+def test_uses_largest_yellow_contour_only_in_lower_middle() -> None:
+    image = Image.new("RGB", (1000, 2000), (80, 70, 130))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((50, 100, 950, 500), radius=30, fill=(235, 180, 45))
+    draw.rounded_rectangle((250, 1200, 750, 1350), radius=20, fill=(235, 180, 45))
+    draw.rounded_rectangle((400, 1500, 600, 1575), radius=15, fill=(235, 180, 45))
+
+    region = YellowLevelButtonDetector().locate(_image_capture(image))
+
+    assert region == PixelRect(251, 1201, 501, 151)
+
+
+def test_retries_with_a_new_capture_when_level_ocr_fails(tmp_path: Path) -> None:
+    capture = _capture("home_screen.png")
+    recaptures: list[ScreenCapture] = []
+    waits: list[float] = []
+
+    class RetryDetector(YellowLevelButtonDetector):
+        attempts = 0
+
+        def _read_level(self, image: object, region: PixelRect) -> int:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise OcrError("temporary OCR failure")
+            return 90
+
+    def recapture() -> ScreenCapture:
+        recaptures.append(capture)
+        return capture
+
+    detector = RetryDetector(
+        tmp_path,
+        recapture=recapture,
+        sleeper=waits.append,
+    )
+
+    result = detector.detect(capture)
+
+    assert result.level == 90
+    assert detector.attempts == 2
+    assert recaptures == [capture]
+    assert waits == [0.5]
+
+
+def test_saves_all_candidates_when_yellow_button_detection_fails(
+    tmp_path: Path,
+) -> None:
+    image = Image.new("RGB", (1000, 2000), (80, 70, 130))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((400, 1200, 440, 1220), radius=10, fill=(235, 180, 45))
+    detector = YellowLevelButtonDetector(tmp_path)
+
+    with pytest.raises(RuntimeNavigationError, match="Yellow level button was not detected"):
+        detector.detect(_image_capture(image))
+
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "button_candidates.png",
+        "home_screen.png",
+        "yellow_mask.png",
+    ]
 
 
 def test_finds_close_button_in_upper_right_region() -> None:
-    result = UpperRightPopupCloseDetector().detect(
-        _capture("daily_dash_popup.png")
-    )
+    result = UpperRightPopupCloseDetector().detect(_capture("daily_dash_popup.png"))
 
     assert result == PixelRect(1200, 750, 180, 190)
 
 
 def test_does_not_find_close_button_on_home_screen() -> None:
-    assert (
-        UpperRightPopupCloseDetector().detect(_capture("home_screen.png")) is None
-    )
+    assert UpperRightPopupCloseDetector().detect(_capture("home_screen.png")) is None

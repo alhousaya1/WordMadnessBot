@@ -176,6 +176,7 @@ class ApplicationRuntime:
             button_top=region.top,
             button_width=region.width,
             button_height=region.height,
+            ocr_crop_size=f"{button.ocr_crop_size[0]}x{button.ocr_crop_size[1]}",
             template_confidence=None,
         )
         self.logger.info("runtime.level.detected", detected_level=button.level)
@@ -448,7 +449,12 @@ def build_runtime(
             sleeper=sleeper,
         ),
         home_level_button_detector=(
-            home_level_button_detector or YellowLevelButtonDetector()
+            home_level_button_detector
+            or YellowLevelButtonDetector(
+                settings.debug_directory,
+                recapture=android.capture_screenshot,
+                sleeper=sleeper,
+            )
         ),
         clock=clock,
         sleeper=sleeper,

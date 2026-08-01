@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import io
 import itertools
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
 from importlib.resources import files
+from pathlib import Path
 from typing import Any, Protocol
 
 from PIL import Image
@@ -25,6 +28,7 @@ class HomeLevelButton:
 
     region: PixelRect
     level: int
+    ocr_crop_size: tuple[int, int] = (0, 0)
 
 
 class HomeLevelButtonPort(Protocol):
@@ -50,9 +54,19 @@ class _Glyph:
 class YellowLevelButtonDetector:
     """Locate the yellow rounded rectangle and read only its interior text."""
 
-    def __init__(self, *, minimum_digit_confidence: float = 0.72) -> None:
+    def __init__(
+        self,
+        debug_directory: Path = Path("debug"),
+        *,
+        minimum_digit_confidence: float = 0.72,
+        recapture: Callable[[], ScreenCapture] | None = None,
+        retry_wait_seconds: float = 0.5,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
         if not 0.0 <= minimum_digit_confidence <= 1.0:
             raise ValueError("minimum_digit_confidence must be between zero and one")
+        if retry_wait_seconds < 0:
+            raise ValueError("retry_wait_seconds must not be negative")
         package = files("word_madness_bot.resources.digits")
         self._templates = {
             digit: _normalize_mask(
@@ -61,63 +75,112 @@ class YellowLevelButtonDetector:
             for digit in "0123456789"
         }
         self.minimum_digit_confidence = minimum_digit_confidence
-
+        self.debug_directory = debug_directory
+        self.recapture = recapture
+        self.retry_wait_seconds = retry_wait_seconds
+        self.sleeper = sleeper
     def detect(self, capture: ScreenCapture) -> HomeLevelButton:
-        image = _decode_color(capture)
-        region = self._locate(image)
-        level = self._read_level(image, region)
-        return HomeLevelButton(region, level)
+        current = capture
+        while True:
+            image = _decode_color(current)
+            region, mask, candidates = self._locate(image)
+            if region is None:
+                self._save_failure_debug(current, image, mask, candidates)
+                raise RuntimeNavigationError("Yellow level button was not detected")
+            self._save_success_debug(current, image, mask, region)
+            try:
+                level = self._read_level(image, region)
+            except OcrError:
+                if self.recapture is None:
+                    raise
+                self.sleeper(self.retry_wait_seconds)
+                current = self.recapture()
+                continue
+            return HomeLevelButton(region, level, self.ocr_crop_size(region))
 
     def locate(self, capture: ScreenCapture) -> PixelRect:
         """Locate the button independently of its changing text."""
-        return self._locate(_decode_color(capture))
+        region, _, _ = self._locate(_decode_color(capture))
+        if region is None:
+            raise RuntimeNavigationError("Yellow level button was not detected")
+        return region
 
-    def _locate(self, image: Any) -> PixelRect:
+    def ocr_crop_size(self, region: PixelRect) -> tuple[int, int]:
+        """Return the exact interior dimensions supplied to level-number OCR."""
+        inset_x = max(2, round(region.width * 0.02))
+        inset_y = max(2, round(region.height * 0.08))
+        return region.width - 2 * inset_x, region.height - 2 * inset_y
+
+    def _locate(
+        self, image: Any
+    ) -> tuple[PixelRect | None, Any, list[tuple[int, int, int, int, float]]]:
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(
-            hsv,
+        height, width = hsv.shape[:2]
+        crop_left, crop_right = round(width * 0.15), round(width * 0.85)
+        crop_top, crop_bottom = round(height * 0.55), round(height * 0.78)
+        search_mask = cv2.inRange(
+            hsv[crop_top:crop_bottom, crop_left:crop_right],
             np.array((10, 70, 120), dtype=np.uint8),
             np.array((45, 255, 255), dtype=np.uint8),
         )
-        height, width = mask.shape
-        kernel_size = max(3, round(min(width, height) * 0.008))
+        kernel_size = max(3, round(min(search_mask.shape) * 0.008))
         kernel = cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
         )
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        candidates: list[tuple[float, PixelRect]] = []
-        screen_area = width * height
+        search_mask = cv2.morphologyEx(search_mask, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(
+            search_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        mask = np.zeros((height, width), dtype=np.uint8)
+        mask[crop_top:crop_bottom, crop_left:crop_right] = search_mask
+        candidates = []
         for contour in contours:
-            left, top, button_width, button_height = cv2.boundingRect(contour)
-            if button_height <= 0:
-                continue
-            aspect = button_width / button_height
-            area_ratio = button_width * button_height / screen_area
-            width_ratio = button_width / width
-            height_ratio = button_height / height
-            fill_ratio = cv2.contourArea(contour) / (button_width * button_height)
-            if not (
-                top >= height * 0.35
-                and 2.0 <= aspect <= 10.0
-                and 0.01 <= area_ratio <= 0.25
-                and 0.25 <= width_ratio <= 0.95
-                and 0.025 <= height_ratio <= 0.20
-                and fill_ratio >= 0.70
-            ):
-                continue
-            horizontal_center = left + button_width / 2
-            center_offset = abs(horizontal_center - width / 2) / width
-            score = (
-                button_width * button_height * fill_ratio * (1.0 - center_offset)
-            )
-            candidates.append(
-                (score, PixelRect(left, top, button_width, button_height))
-            )
-        if not candidates:
-            raise RuntimeNavigationError("Yellow level button was not detected")
-        return max(candidates, key=lambda item: item[0])[1]
+            left, top, candidate_width, candidate_height = cv2.boundingRect(contour)
+            candidates.append((
+                crop_left + left, crop_top + top, candidate_width,
+                candidate_height, float(cv2.contourArea(contour)),
+            ))
+        if not contours:
+            return None, mask, candidates
+        contour = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(contour) < search_mask.size * 0.01:
+            return None, mask, candidates
+        left, top, button_width, button_height = cv2.boundingRect(contour)
+        return (
+            PixelRect(crop_left + left, crop_top + top, button_width, button_height),
+            mask,
+            candidates,
+        )
 
+    def _save_success_debug(
+        self, capture: ScreenCapture, image: Any, mask: Any, region: PixelRect
+    ) -> None:
+        self._save_base_debug(capture, mask)
+        annotated = image.copy()
+        _draw_box(annotated, region, (0, 0, 255))
+        _save_png(self.debug_directory / "button_box.png", annotated)
+
+    def _save_failure_debug(
+        self,
+        capture: ScreenCapture,
+        image: Any,
+        mask: Any,
+        candidates: list[tuple[int, int, int, int, float]],
+    ) -> None:
+        self._save_base_debug(capture, mask)
+        annotated = image.copy()
+        for index, (left, top, width, height, area) in enumerate(candidates):
+            _draw_box(annotated, PixelRect(left, top, width, height), (0, 0, 255))
+            cv2.putText(
+                annotated, f"{index}: {area:.0f}", (left, max(20, top - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2, cv2.LINE_AA,
+            )
+        _save_png(self.debug_directory / "button_candidates.png", annotated)
+
+    def _save_base_debug(self, capture: ScreenCapture, mask: Any) -> None:
+        self.debug_directory.mkdir(parents=True, exist_ok=True)
+        (self.debug_directory / "home_screen.png").write_bytes(capture.data)
+        _save_png(self.debug_directory / "yellow_mask.png", mask)
     def _read_level(self, image: Any, region: PixelRect) -> int:
         inset_x = max(2, round(region.width * 0.02))
         inset_y = max(2, round(region.height * 0.08))
@@ -223,6 +286,22 @@ class UpperRightPopupCloseDetector:
             return None
         return best[1]
 
+
+def _draw_box(image: Any, region: PixelRect, color: tuple[int, int, int]) -> None:
+    cv2.rectangle(
+        image,
+        (region.left, region.top),
+        (region.left + region.width - 1, region.top + region.height - 1),
+        color,
+        max(2, round(min(image.shape[:2]) * 0.003)),
+    )
+
+
+def _save_png(path: Path, image: Any) -> None:
+    encoded, data = cv2.imencode(".png", image)
+    if not encoded:
+        raise RuntimeNavigationError(f"Unable to encode debug image: {path}")
+    path.write_bytes(data.tobytes())
 
 def _decode_color(capture: ScreenCapture) -> Any:
     encoded = np.frombuffer(capture.data, dtype=np.uint8)
