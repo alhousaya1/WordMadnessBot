@@ -10,7 +10,7 @@ from word_madness_bot.application.runtime_controls import (
     CompletionOverlayPort,
     PopupCloseButtonPort,
 )
-from word_madness_bot.domain.geometry import NormalizedPoint, PixelPoint
+from word_madness_bot.domain.geometry import NormalizedPoint, PixelPoint, PixelRect
 from word_madness_bot.domain.models import ScreenCapture
 from word_madness_bot.vision.screen_classifier import ScreenClassification, ScreenType
 
@@ -38,6 +38,7 @@ class RuntimeDispatch:
     state: RuntimeScreenState
     action_point: PixelPoint | None = None
     classification: ScreenClassification | None = None
+    action_region: PixelRect | None = None
 
 
 class RuntimeScreenDispatcher:
@@ -56,9 +57,14 @@ class RuntimeScreenDispatcher:
     def dispatch(self, capture: ScreenCapture) -> RuntimeDispatch:
         """Classify one frame with Home and Level protected from arrow actions."""
         if self.overlays is not None and self.overlays.completion_home_visible(capture):
+            locate_button = getattr(self.overlays, "completion_home_button", None)
+            button = locate_button(capture) if callable(locate_button) else None
             return RuntimeDispatch(
                 RuntimeScreenState.COMPLETION_HOME,
-                START_LEVEL_POINT.to_pixels(capture.size),
+                _center(button)
+                if button is not None
+                else START_LEVEL_POINT.to_pixels(capture.size),
+                action_region=button,
             )
 
         classification = self.classifier(capture)
@@ -107,3 +113,10 @@ class RuntimeScreenDispatcher:
                 classification,
             )
         return RuntimeDispatch(RuntimeScreenState.UNKNOWN, classification=classification)
+
+
+def _center(region: PixelRect) -> PixelPoint:
+    return PixelPoint(
+        region.left + region.width // 2,
+        region.top + region.height // 2,
+    )

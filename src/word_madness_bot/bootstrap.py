@@ -43,7 +43,7 @@ from word_madness_bot.domain.errors import (
     WordMadnessError,
     WordNotAcceptedError,
 )
-from word_madness_bot.domain.geometry import NormalizedPoint, PixelPoint
+from word_madness_bot.domain.geometry import NormalizedPoint, PixelPoint, PixelRect
 from word_madness_bot.domain.models import ScreenCapture
 from word_madness_bot.gameplay.ads import AdvertisementPolicy
 from word_madness_bot.gameplay.swipe_generator import SwipePathPlanner
@@ -75,6 +75,7 @@ AndroidFactory = Callable[[Settings, StructuredLogger], AndroidPort]
 LevelFactory = Callable[[], LevelRepository]
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
+COMPLETION_HOME_TRANSITION_TIMEOUT_SECONDS = 23.0
 
 
 class RuntimeScreenClassifier(Protocol):
@@ -127,6 +128,8 @@ class ApplicationRuntime:
         completed_levels = 0
         screenshot_number = 0
         awaiting_level = False
+        completion_home_started: float | None = None
+        completion_home_attempts = 0
 
         while max_levels is None or completed_levels < max_levels:
             screenshot_number += 1
@@ -135,6 +138,8 @@ class ApplicationRuntime:
             self.logger.info("runtime.screen.dispatched", runtime_state=dispatch.state.value)
 
             if dispatch.state is RuntimeScreenState.LEVEL:
+                completion_home_started = None
+                completion_home_attempts = 0
                 if awaiting_level and dispatch.classification is not None:
                     self.logger.info(
                         "runtime.level.entered",
@@ -147,10 +152,37 @@ class ApplicationRuntime:
                 completed_levels += 1
                 continue
 
-            if dispatch.state in {
-                RuntimeScreenState.NORMAL_HOME,
-                RuntimeScreenState.COMPLETION_HOME,
-            }:
+            if dispatch.state is RuntimeScreenState.COMPLETION_HOME:
+                now = self.clock()
+                if completion_home_started is None:
+                    completion_home_started = now
+                    completion_home_attempts = 0
+                if now - completion_home_started >= COMPLETION_HOME_TRANSITION_TIMEOUT_SECONDS:
+                    raise RuntimeNavigationError(
+                        "Completion Home did not transition after tapping the Level button "
+                        f"within {COMPLETION_HOME_TRANSITION_TIMEOUT_SECONDS:.0f} seconds"
+                    )
+
+                point = dispatch.action_point
+                should_tap = completion_home_attempts == 0 or (
+                    completion_home_attempts == 1 and dispatch.action_region is not None
+                )
+                if should_tap:
+                    if point is None:
+                        raise RuntimeNavigationError(
+                            "Completion Home dispatcher did not provide a Level tap"
+                        )
+                    self._log_start_level(point, dispatch.action_region)
+                    self.android.tap(point)
+                completion_home_attempts += 1
+                awaiting_level = False
+                self.sleeper(0.5)
+                continue
+
+            completion_home_started = None
+            completion_home_attempts = 0
+
+            if dispatch.state is RuntimeScreenState.NORMAL_HOME:
                 point = dispatch.action_point
                 if point is None:
                     raise RuntimeNavigationError("Home dispatcher did not provide a Level tap")
@@ -177,13 +209,13 @@ class ApplicationRuntime:
         self._started = True
         self.logger.info("runtime.started", dry_run=False)
 
-    def _log_start_level(self, point: PixelPoint) -> None:
+    def _log_start_level(self, point: PixelPoint, region: PixelRect | None = None) -> None:
         self.logger.info(
             "runtime.start_level.detected",
-            button_left=point.x,
-            button_top=point.y,
-            button_width=0,
-            button_height=0,
+            button_left=region.left if region is not None else point.x,
+            button_top=region.top if region is not None else point.y,
+            button_width=region.width if region is not None else 0,
+            button_height=region.height if region is not None else 0,
             ocr_crop_width=0,
             ocr_crop_height=0,
             template_confidence=None,

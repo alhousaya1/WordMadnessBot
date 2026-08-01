@@ -57,6 +57,7 @@ def test_completion_home_button_prevents_overlay_and_back_detection() -> None:
     detector = CompletionOverlayDetector()
 
     assert detector.completion_home_visible(capture)
+    assert detector.completion_home_button(capture) == PixelRect(80, 440, 241, 81)
     assert not detector.tap_to_continue_visible(capture)
     assert not detector.daily_celebration_visible(capture)
     assert not detector.settings_visible(capture)
