@@ -176,7 +176,8 @@ class ApplicationRuntime:
             button_top=region.top,
             button_width=region.width,
             button_height=region.height,
-            ocr_crop_size=f"{crop_width}x{crop_height}",
+            ocr_crop_width=crop_width,
+            ocr_crop_height=crop_height,
             template_confidence=None,
         )
         button = self.home_level_button_detector.recognize_level(capture, region)

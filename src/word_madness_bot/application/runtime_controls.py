@@ -94,15 +94,35 @@ class YellowLevelButtonDetector:
     def recognize_level(
         self, capture: ScreenCapture, region: PixelRect
     ) -> HomeLevelButton:
-        """Read the level from the detected button in the same capture."""
-        level = self._read_level(_decode_color(capture), region)
-        return HomeLevelButton(region, level, self.ocr_crop_size(region))
-    def ocr_crop_size(self, region: PixelRect) -> tuple[int, int]:
-        """Return the exact interior dimensions supplied to level-number OCR."""
-        inset_x = max(2, round(region.width * 0.02))
-        inset_y = max(2, round(region.height * 0.08))
-        return region.width - 2 * inset_x, region.height - 2 * inset_y
+        """Read the level from the tightened interior of the detected button."""
+        image = _decode_color(capture)
+        ocr_region = self._ocr_region(region)
+        crop = image[
+            ocr_region.top : ocr_region.top + ocr_region.height,
+            ocr_region.left : ocr_region.left + ocr_region.width,
+        ]
+        _save_png(self.debug_directory / "button_crop.png", crop)
+        level = self._read_level(image, ocr_region)
+        return HomeLevelButton(region, level, (ocr_region.width, ocr_region.height))
 
+    def ocr_crop_size(self, region: PixelRect) -> tuple[int, int]:
+        """Return the tightened rectangle dimensions supplied to OCR."""
+        ocr_region = self._ocr_region(region)
+        return ocr_region.width, ocr_region.height
+
+    def _ocr_region(self, region: PixelRect) -> PixelRect:
+        inset_x = max(1, round(region.width * 0.05))
+        inset_y = (
+            max(1, round(region.height * 0.30))
+            if region.height > region.width * 0.30
+            else 0
+        )
+        return PixelRect(
+            region.left + inset_x,
+            region.top + inset_y,
+            region.width - 2 * inset_x,
+            region.height - 2 * inset_y,
+        )
     def _locate(
         self, image: Any
     ) -> tuple[PixelRect | None, Any, list[tuple[int, int, int, int, float]]]:

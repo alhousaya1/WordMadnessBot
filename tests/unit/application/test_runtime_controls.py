@@ -38,9 +38,10 @@ def test_detects_yellow_rectangle_and_reads_only_its_level_text(
         result.region.left + result.region.width // 2,
         result.region.top + result.region.height // 2,
     ) == (721, 2043)
-    assert result.ocr_crop_size == (858, 158)
+    assert result.ocr_crop_size == (804, 188)
     assert sorted(path.name for path in tmp_path.iterdir()) == [
         "button_box.png",
+        "button_crop.png",
         "home_screen.png",
         "yellow_mask.png",
     ]
@@ -64,6 +65,12 @@ def test_locates_alternate_yellow_button_independently_of_text() -> None:
         region.top + region.height // 2,
     ) == (541, 1601)
 
+
+def test_tightens_oversized_contour_only_for_ocr() -> None:
+    detector = YellowLevelButtonDetector()
+    region = PixelRect(100, 200, 1008, 629)
+
+    assert detector.ocr_crop_size(region) == (908, 251)
 
 def test_uses_largest_yellow_contour_only_in_lower_middle() -> None:
     image = Image.new("RGB", (1000, 2000), (80, 70, 130))
