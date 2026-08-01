@@ -36,40 +36,56 @@ class AcceptanceResult:
 
 
 class WordAcceptanceVerifier(Protocol):
-    """Compare level state immediately before and after a word gesture."""
+    """Confirm that an answer-board change persists after gesture animations settle."""
 
-    def verify(self, before: ScreenCapture, after: ScreenCapture) -> AcceptanceResult: ...
+    def verify(
+        self,
+        before: ScreenCapture,
+        after: ScreenCapture,
+        confirmation: ScreenCapture,
+    ) -> AcceptanceResult: ...
 
 
 class ImageDifferenceWordAcceptanceVerifier:
-    """Detect accepted words through meaningful changes in the answer-board region."""
+    """Accept only persistent answer-board changes observed in two post-swipe frames."""
 
     def __init__(self, *, minimum_changed_ratio: float = 0.0005) -> None:
         if not 0.0 < minimum_changed_ratio < 1.0:
             raise ValueError("minimum_changed_ratio must be between zero and one")
         self.minimum_changed_ratio = minimum_changed_ratio
 
-    def verify(self, before: ScreenCapture, after: ScreenCapture) -> AcceptanceResult:
-        """Compare resolution-independent answer-board crops from two screenshots."""
-        if before.size != after.size:
-            raise WordExecutionError("Before and after screenshots have different sizes")
+    def verify(
+        self,
+        before: ScreenCapture,
+        after: ScreenCapture,
+        confirmation: ScreenCapture,
+    ) -> AcceptanceResult:
+        """Reject transient traces by requiring the board change in both later frames."""
+        if before.size != after.size or before.size != confirmation.size:
+            raise WordExecutionError("Acceptance screenshots have different sizes")
         before_gray = _decode_grayscale(before)
         after_gray = _decode_grayscale(after)
+        confirmation_gray = _decode_grayscale(confirmation)
         height, width = before_gray.shape
         left, right = round(width * 0.12), round(width * 0.88)
         top, bottom = round(height * 0.08), round(height * 0.60)
-        difference = cv2.absdiff(
-            before_gray[top:bottom, left:right],
-            after_gray[top:bottom, left:right],
+        before_board = before_gray[top:bottom, left:right]
+        after_board = after_gray[top:bottom, left:right]
+        confirmation_board = confirmation_gray[top:bottom, left:right]
+        first_change = cv2.absdiff(before_board, after_board) >= 25
+        confirmed_change = cv2.absdiff(before_board, confirmation_board) >= 25
+        persistent_change = np.logical_and(first_change, confirmed_change)
+        persistent_ratio = float(np.count_nonzero(persistent_change) / persistent_change.size)
+        persistent_difference = np.where(
+            persistent_change,
+            cv2.absdiff(before_board, confirmation_board),
+            0,
         )
-        changed_ratio = float(np.count_nonzero(difference >= 25) / difference.size)
-        mean_difference = float(np.mean(difference))
         return AcceptanceResult(
-            changed_ratio >= self.minimum_changed_ratio,
-            changed_ratio,
-            mean_difference,
+            persistent_ratio >= self.minimum_changed_ratio,
+            persistent_ratio,
+            float(np.mean(persistent_difference)),
         )
-
 
 @dataclass(frozen=True, slots=True)
 class WordExecutionResult:
@@ -108,14 +124,18 @@ class SingleWordExecutor:
         verifier: WordAcceptanceVerifier,
         *,
         animation_wait_seconds: float = 1.5,
+        confirmation_wait_seconds: float = 0.5,
         sleeper: Sleeper = time.sleep,
         clock: Clock = time.monotonic,
     ) -> None:
         if animation_wait_seconds < 0:
             raise ValueError("animation_wait_seconds cannot be negative")
+        if confirmation_wait_seconds < 0:
+            raise ValueError("confirmation_wait_seconds cannot be negative")
         self.android = android
         self.verifier = verifier
         self.animation_wait_seconds = animation_wait_seconds
+        self.confirmation_wait_seconds = confirmation_wait_seconds
         self.sleeper = sleeper
         self.clock = clock
 
@@ -132,6 +152,7 @@ class SingleWordExecutor:
         started = self.clock()
         before_path = debug_directory / "word_before.png"
         after_path = debug_directory / "word_after.png"
+        confirmation_path = debug_directory / "word_confirmed.png"
         swipe_path = debug_directory / "swipe.json"
         try:
             save_screenshot(before.data, before_path)
@@ -141,7 +162,10 @@ class SingleWordExecutor:
             self.sleeper(self.animation_wait_seconds)
             after = self.android.capture_screenshot()
             save_screenshot(after.data, after_path)
-            acceptance = self.verifier.verify(before, after)
+            self.sleeper(self.confirmation_wait_seconds)
+            confirmation = self.android.capture_screenshot()
+            save_screenshot(confirmation.data, confirmation_path)
+            acceptance = self.verifier.verify(before, after, confirmation)
             result = WordExecutionResult(
                 first.word,
                 first.duration_ms,

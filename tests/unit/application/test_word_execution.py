@@ -72,8 +72,9 @@ class Android:
 def test_verifier_accepts_answer_board_change_and_rejects_identical_state() -> None:
     verifier = ImageDifferenceWordAcceptanceVerifier()
     before = _capture()
-    assert verifier.verify(before, _capture(changed=True)).accepted is True
-    assert verifier.verify(before, before).accepted is False
+    changed = _capture(changed=True)
+    assert verifier.verify(before, changed, changed).accepted is True
+    assert verifier.verify(before, changed, before).accepted is False
 
 
 def test_executor_attempts_only_first_word_and_saves_all_evidence(tmp_path: Path) -> None:
@@ -91,10 +92,11 @@ def test_executor_attempts_only_first_word_and_saves_all_evidence(tmp_path: Path
     assert android.swipes == [
         SwipePath((PixelPoint(100, 600), PixelPoint(200, 650)), 250)
     ]
-    assert android.captures == 1
-    assert sleeps == [1.5]
+    assert android.captures == 2
+    assert sleeps == [1.5, 0.5]
     assert (tmp_path / "word_before.png").exists()
     assert (tmp_path / "word_after.png").exists()
+    assert (tmp_path / "word_confirmed.png").exists()
     payload = json.loads((tmp_path / "swipe.json").read_text(encoding="utf-8"))
     assert payload["word"] == "AB"
     assert payload["accepted"] is True
@@ -110,4 +112,4 @@ def test_verifier_rejects_mismatched_screen_sizes() -> None:
     image.save(output, format="PNG")
     after = ScreenCapture(output.getvalue(), ScreenSize(200, 400))
     with pytest.raises(WordExecutionError, match="different sizes"):
-        ImageDifferenceWordAcceptanceVerifier().verify(before, after)
+        ImageDifferenceWordAcceptanceVerifier().verify(before, after, after)

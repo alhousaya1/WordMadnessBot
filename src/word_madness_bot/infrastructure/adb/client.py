@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import re
+import socket
 import subprocess
-import tempfile
 import time
 from collections.abc import Callable, Sequence
-from pathlib import Path
+from typing import Protocol
 
 from word_madness_bot.application.ports.android import AndroidPort
 from word_madness_bot.config.logging import StructuredLogger
@@ -33,6 +33,19 @@ from word_madness_bot.infrastructure.adb.screenshot import parse_png_size
 
 Runner = Callable[..., subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]]
 Sleeper = Callable[[float], None]
+Launcher = Callable[..., subprocess.Popen[bytes]]
+Connector = Callable[[tuple[str, int], float], socket.socket]
+
+
+class MonkeyStream(Protocol):
+    """Binary stream exposed by the Monkey network socket."""
+
+    def write(self, data: bytes) -> int: ...
+
+    def flush(self) -> None: ...
+
+    def readline(self) -> bytes: ...
+_MONKEY_DEVICE_PORT = 1080
 
 
 class AdbClient(AndroidPort):
@@ -45,11 +58,15 @@ class AdbClient(AndroidPort):
         *,
         runner: Runner = subprocess.run,
         sleeper: Sleeper = time.sleep,
+        launcher: Launcher = subprocess.Popen,
+        connector: Connector = socket.create_connection,
     ) -> None:
         self._settings = settings
         self._logger = logger
         self._runner = runner
         self._sleeper = sleeper
+        self._launcher = launcher
+        self._connector = connector
         self._device: DeviceDescriptor | None = None
 
     def discover_devices(self) -> tuple[DeviceDescriptor, ...]:
@@ -110,56 +127,96 @@ class AdbClient(AndroidPort):
             round(index * path.duration_ms / (len(path.points) - 1))
             for index in range(len(path.points))
         )
-        script = _build_monkey_swipe_script(path, timestamps)
+        commands = _build_monkey_touch_commands(path)
+        script = "\n".join(commands) + "\n"
         debug_script_path = self._settings.debug_directory / "swipe_script.txt"
         debug_script_path.parent.mkdir(parents=True, exist_ok=True)
         debug_script_path.write_text(script, encoding="utf-8", newline="\n")
         self._logger.info(
             "adb.swipe.script.saved", output_filename=str(debug_script_path)
         )
-        remote_path = "/data/local/tmp/word_madness_swipe.txt"
-        backend_command = ("shell", "monkey", "-f", remote_path, "1")
-        local_path: Path | None = None
-        script_pushed = False
+        host_port = int(
+            self._run_text(
+                ["forward", "tcp:0", f"tcp:{_MONKEY_DEVICE_PORT}"], retry=False
+            ).strip()
+        )
+        server_command = tuple(
+            self._command(["shell", "monkey", "--port", str(_MONKEY_DEVICE_PORT)])
+        )
         self._logger.info(
             "adb.swipe.backend_selected",
-            backend="monkey_script",
-            backend_command=list(backend_command),
+            backend="monkey_network_touch",
+            backend_command=list(server_command),
+            host_port=host_port,
+            device_port=_MONKEY_DEVICE_PORT,
         )
+        process: subprocess.Popen[bytes] | None = None
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                newline="\n",
-                suffix=".txt",
-                delete=False,
-            ) as stream:
-                stream.write(script)
-                local_path = Path(stream.name)
-            self._run_text(["push", str(local_path), remote_path], retry=False)
-            script_pushed = True
-            self._run_text(list(backend_command), retry=False)
+            process = self._launcher(
+                list(server_command),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            connection = self._connect_monkey(host_port, server_command)
+            with connection, connection.makefile("rwb") as stream:
+                self._send_touch_sequence(stream, commands, timestamps)
         finally:
-            if local_path is not None:
-                local_path.unlink(missing_ok=True)
-            if script_pushed:
+            if process is not None and process.poll() is None:
+                process.terminate()
                 try:
-                    self._run_text(["shell", "rm", "-f", remote_path], retry=False)
-                except AdbCommandError:
-                    self._logger.warning(
-                        "adb.swipe.cleanup_failed",
-                        remote_path=remote_path,
-                    )
+                    process.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=1.0)
+            try:
+                self._run_text(
+                    ["forward", "--remove", f"tcp:{host_port}"], retry=False
+                )
+            except AdbCommandError:
+                self._logger.warning("adb.swipe.forward_cleanup_failed", host_port=host_port)
         self._logger.info(
             "adb.swipe.executed",
             duration_ms=path.duration_ms,
             point_count=len(path.points),
-            backend="monkey_script",
-            backend_command=list(backend_command),
+            backend="monkey_network_touch",
+            backend_command=list(server_command),
             timestamps_ms=list(timestamps),
         )
-        return SwipeExecutionReceipt(backend_command, timestamps)
+        return SwipeExecutionReceipt(server_command, timestamps)
 
+    def _connect_monkey(
+        self, host_port: int, server_command: tuple[str, ...]
+    ) -> socket.socket:
+        for attempt in range(20):
+            try:
+                return self._connector(("127.0.0.1", host_port), 0.25)
+            except OSError as error:
+                if attempt == 19:
+                    raise AdbCommandError(
+                        server_command, 1, f"Monkey network server unavailable: {error}"
+                    ) from error
+                self._sleeper(0.05)
+        raise AssertionError("unreachable")
+
+    def _send_touch_sequence(
+        self,
+        stream: MonkeyStream,
+        commands: tuple[str, ...],
+        timestamps: tuple[int, ...],
+    ) -> None:
+        for index, command in enumerate(commands):
+            if 0 < index < len(timestamps):
+                self._sleeper((timestamps[index] - timestamps[index - 1]) / 1000)
+            stream.write(f"{command}\n".encode())
+            stream.flush()
+            response = stream.readline().decode(errors="replace").strip()
+            if not response.startswith("OK"):
+                raise AdbCommandError(
+                    ["monkey_network_touch", command], 1, response or "No response"
+                )
+        stream.write(b"quit\n")
+        stream.flush()
     def press_back(self) -> None:
         self._run_text(["shell", "input", "keyevent", "BACK"], retry=False)
 
@@ -244,35 +301,12 @@ class AdbClient(AndroidPort):
         raise failure
 
 
-def _build_monkey_swipe_script(
-    path: SwipePath,
-    timestamps: tuple[int, ...],
-) -> str:
-    events: list[str] = []
-    down_time = 1
-    for index, point in enumerate(path.points):
-        if index:
-            events.append(f"UserWait({timestamps[index] - timestamps[index - 1]})")
-        action = 0 if index == 0 else 2
-        events.append(
-            "DispatchPointer("
-            f"{down_time},{timestamps[index] + down_time},{action},"
-            f"{point.x},{point.y},1.0,1.0,0,1.0,1.0,0,0)"
-        )
+def _build_monkey_touch_commands(path: SwipePath) -> tuple[str, ...]:
+    commands = [f"touch down {path.points[0].x} {path.points[0].y}"]
+    commands.extend(f"touch move {point.x} {point.y}" for point in path.points[1:])
     final_point = path.points[-1]
-    events.append(
-        "DispatchPointer("
-        f"{down_time},{timestamps[-1] + down_time},1,"
-        f"{final_point.x},{final_point.y},0.0,1.0,0,1.0,1.0,0,0)"
-    )
-    return (
-        "type= raw events\n"
-        f"count= {len(events)}\n"
-        "speed= 1.0\n"
-        "start data >>\n"
-        + "\n".join(events)
-        + "\n"
-    )
+    commands.append(f"touch up {final_point.x} {final_point.y}")
+    return tuple(commands)
 
 def _parse_devices(output: str) -> tuple[DeviceDescriptor, ...]:
     devices: list[DeviceDescriptor] = []

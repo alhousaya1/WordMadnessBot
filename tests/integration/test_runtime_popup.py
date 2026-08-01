@@ -78,6 +78,7 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
             ScreenCapture(home.read_bytes(), ScreenSize(1440, 3120)),
             ScreenCapture(level.read_bytes(), ScreenSize(1440, 3120)),
             ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
         )
     )
     runtime = build_runtime(
@@ -117,3 +118,4 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     assert swipe["accepted"] is True
     assert (tmp_path / "word_before.png").exists()
     assert (tmp_path / "word_after.png").exists()
+    assert (tmp_path / "word_confirmed.png").exists()
