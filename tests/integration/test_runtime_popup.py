@@ -11,6 +11,7 @@ from typing import Any, cast
 from PIL import Image, ImageDraw
 
 from word_madness_bot.application.ports.android import AndroidPort
+from word_madness_bot.application.word_execution import AcceptanceResult
 from word_madness_bot.bootstrap import build_runtime
 from word_madness_bot.config.logging import configure_logging
 from word_madness_bot.config.settings import Settings
@@ -50,6 +51,11 @@ class Android:
     def __getattr__(self, name: str) -> Any:
         return lambda *args, **kwargs: None
 
+class AcceptanceVerifier:
+    def verify(
+        self, before: ScreenCapture, after: ScreenCapture, confirmation: ScreenCapture
+    ) -> AcceptanceResult:
+        return AcceptanceResult(True, 0.01, 1.0)
 
 def _capture(*templates: tuple[str, int, int]) -> ScreenCapture:
     image = Image.new("L", (1400, 1000), 24)
@@ -79,6 +85,28 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
             ScreenCapture(level.read_bytes(), ScreenSize(1440, 3120)),
             ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
             ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
+            ScreenCapture(home.read_bytes(), ScreenSize(1440, 3120)),
         )
     )
     runtime = build_runtime(
@@ -87,14 +115,14 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
         android_factory=lambda settings, logger: cast(AndroidPort, android),
         level_factory=JsonLevelRepository.from_package,
         sleeper=lambda _: None,
+        word_acceptance_verifier=AcceptanceVerifier(),
     )
-    runtime.start()
+    runtime.start(max_levels=1)
     runtime.shutdown()
-    assert android.taps == [PixelPoint(1290, 845), PixelPoint(720, 2040)]
-    assert len(android.swipes) == 1
+    assert android.taps == [PixelPoint(1290, 845), PixelPoint(720, 2038)]
+    assert len(android.swipes) == 8
     assert (tmp_path / "screenshot-1.png").exists()
     assert (tmp_path / "screenshot-2.png").exists()
-    assert (tmp_path / "screenshot-3.png").exists()
     assert (tmp_path / "letter-wheel-annotated.png").exists()
     assert (tmp_path / "letter-wheel-geometry.json").exists()
     crops = sorted((tmp_path / "letters").glob("letter-*.png"))
@@ -114,7 +142,7 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
         "DON", "DUN", "DUO", "FUN", "NOD", "FOND", "FUND", "FOUND"
     ]
     swipe = json.loads((tmp_path / "swipe.json").read_text(encoding="utf-8"))
-    assert swipe["word"] == "DON"
+    assert swipe["word"] == "FOUND"
     assert swipe["accepted"] is True
     assert (tmp_path / "word_before.png").exists()
     assert (tmp_path / "word_after.png").exists()

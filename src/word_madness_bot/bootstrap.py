@@ -9,9 +9,17 @@ from typing import NoReturn, Protocol
 
 from word_madness_bot.application.decision_engine import DecisionEngine
 from word_madness_bot.application.game_loop import GameLoop
+from word_madness_bot.application.level_executor import LevelExecutor
 from word_madness_bot.application.ports.android import AndroidPort
 from word_madness_bot.application.ports.levels import LevelRepository
 from word_madness_bot.application.recovery import RecoveryStrategy, RetryPolicy, TimeoutPolicy
+from word_madness_bot.application.runtime_controls import (
+    HomeLevelButton,
+    HomeLevelButtonPort,
+    PopupCloseButtonPort,
+    UpperRightPopupCloseDetector,
+    YellowLevelButtonDetector,
+)
 from word_madness_bot.application.solution_planning import (
     LevelSolutionPlan,
     LevelSolutionPlanner,
@@ -90,13 +98,16 @@ class ApplicationRuntime:
     letter_recognizer: WheelLetterRecognitionPort
     level_number_recognizer: LevelNumberRecognitionPort
     solution_planner: LevelSolutionPlanner
-    word_executor: SingleWordExecutor
+    level_executor: LevelExecutor
+    home_level_button_detector: HomeLevelButtonPort
     clock: Clock = field(default=time.monotonic, repr=False)
     sleeper: Sleeper = field(default=time.sleep, repr=False)
     _started: bool = False
 
-    def start(self, *, dry_run: bool = False) -> None:
-        """Navigate into a level, model its wheel, and recognize its letters."""
+    def start(self, *, dry_run: bool = False, max_levels: int | None = None) -> None:
+        """Run complete levels continuously, unless a test supplies a level bound."""
+        if max_levels is not None and max_levels <= 0:
+            raise ValueError("max_levels must be positive")
         self.logger.info("runtime.starting", dry_run=dry_run)
         if not dry_run:
             device = self.android.select_device()
@@ -127,52 +138,66 @@ class ApplicationRuntime:
                 )
                 classification = self._classify(capture)
 
-            if classification.screen is ScreenType.HOME_SCREEN:
-                if classification.start_button is None:
-                    self._raise_navigation_failure(
-                        classification, reason="start_level_button_not_found"
-                    )
-                region = classification.start_button
-                point = PixelPoint(
-                    region.left + region.width // 2,
-                    region.top + region.height // 2,
-                )
-                self.logger.info(
-                    "runtime.start_level.detected",
-                    button_left=region.left,
-                    button_top=region.top,
-                    button_width=region.width,
-                    button_height=region.height,
-                    template_confidence=classification.start_button_confidence,
-                )
-                self.logger.info(
-                    "runtime.start_level.tap",
-                    tap_x=point.x,
-                    tap_y=point.y,
-                )
-                self.android.tap(point)
-                self.sleeper(2.0)
-                screenshot_number += 1
-                capture = self._capture_debug_screenshot(
-                    f"screenshot-{screenshot_number}.png"
-                )
-                classification = self._classify(capture)
-
-            if classification.screen is not ScreenType.LEVEL_SCREEN:
+            if classification.screen is not ScreenType.HOME_SCREEN:
                 self._raise_navigation_failure(
-                    classification, reason="level_screen_not_reached"
+                    classification, reason="home_screen_not_reached"
                 )
-            self.logger.info(
-                "runtime.level.entered",
-                template_confidence=classification.confidence,
-            )
-            geometry = self._detect_wheel_geometry(capture)
-            recognition = self._recognize_letters(capture, geometry)
-            plan = self._plan_level_solution(capture, geometry, recognition)
-            self._execute_first_word(capture, plan)
+
+            completed_levels = 0
+            while True:
+                button = self._detect_home_level_button(capture)
+                capture, classification = self._enter_level(button)
+                self.logger.info(
+                    "runtime.level.entered",
+                    template_confidence=classification.confidence,
+                )
+                geometry = self._detect_wheel_geometry(capture)
+                recognition = self._recognize_letters(capture, geometry)
+                plan = self._plan_level_solution(
+                    capture,
+                    geometry,
+                    recognition,
+                    level_number=button.level,
+                )
+                self.sleeper(10.0)
+                capture = self._execute_level(capture, plan)
+                completed_levels += 1
+                if max_levels is not None and completed_levels >= max_levels:
+                    break
         self._started = True
         self.logger.info("runtime.started", dry_run=dry_run)
 
+    def _detect_home_level_button(self, capture: ScreenCapture) -> HomeLevelButton:
+        button = self.home_level_button_detector.detect(capture)
+        region = button.region
+        self.logger.info(
+            "runtime.start_level.detected",
+            button_left=region.left,
+            button_top=region.top,
+            button_width=region.width,
+            button_height=region.height,
+            template_confidence=None,
+        )
+        self.logger.info("runtime.level.detected", detected_level=button.level)
+        return button
+
+    def _enter_level(
+        self,
+        button: HomeLevelButton,
+    ) -> tuple[ScreenCapture, ScreenClassification]:
+        region = button.region
+        point = PixelPoint(
+            region.left + region.width // 2,
+            region.top + region.height // 2,
+        )
+        while True:
+            self.logger.info("runtime.start_level.tap", tap_x=point.x, tap_y=point.y)
+            self.android.tap(point)
+            self.sleeper(3.0)
+            capture = self.android.capture_screenshot()
+            classification = self._classify(capture)
+            if classification.screen is ScreenType.LEVEL_SCREEN:
+                return capture, classification
     def _raise_navigation_failure(
         self,
         classification: ScreenClassification,
@@ -257,11 +282,11 @@ class ApplicationRuntime:
         capture: ScreenCapture,
         geometry: LetterWheelGeometry,
         recognition: WheelLetterRecognition,
+        *,
+        level_number: int,
     ) -> LevelSolutionPlan:
         started = self.clock()
         try:
-            level_number = self.level_number_recognizer.recognize(capture)
-            self.logger.info("runtime.level.detected", detected_level=level_number)
             plan = self.solution_planner.plan(
                 level_number, recognition, geometry, capture.size
             )
@@ -283,41 +308,46 @@ class ApplicationRuntime:
         )
         return plan
 
-    def _execute_first_word(
+    def _execute_level(
         self,
         before: ScreenCapture,
         plan: LevelSolutionPlan,
-    ) -> None:
+    ) -> ScreenCapture:
         try:
-            result = self.word_executor.execute(
+            result = self.level_executor.execute(
                 plan, before, self.settings.debug_directory
             )
+        except WordNotAcceptedError as error:
+            self.logger.error(
+                "runtime.word.not_accepted",
+                executed_word=error.word,
+                acceptance_verification=False,
+            changed_pixel_ratio=error.changed_pixel_ratio,
+            )
+            raise
         except WordMadnessError as error:
             self.logger.exception(
                 "runtime.word.execution_failed",
                 error=str(error),
             )
             raise
-        coordinates = [
-            {"x": point.x, "y": point.y} for point in result.coordinates
-        ]
-        self.logger.info(
-            "runtime.word.executed",
-            executed_word=result.word,
-            swipe_duration_ms=result.duration_ms,
-            swipe_coordinates=coordinates,
-            acceptance_verification=result.acceptance.accepted,
-            changed_pixel_ratio=result.acceptance.changed_pixel_ratio,
-            elapsed_execution_seconds=result.elapsed_seconds,
-        )
-        if not result.acceptance.accepted:
-            self.logger.error(
-                "runtime.word.not_accepted",
-                executed_word=result.word,
-                acceptance_verification=False,
-                changed_pixel_ratio=result.acceptance.changed_pixel_ratio,
+        for word in result.words:
+            coordinates = [{"x": point.x, "y": point.y} for point in word.coordinates]
+            self.logger.info(
+                "runtime.word.executed",
+                executed_word=word.word,
+                swipe_duration_ms=word.duration_ms,
+                swipe_coordinates=coordinates,
+                acceptance_verification=word.acceptance.accepted,
+                changed_pixel_ratio=word.acceptance.changed_pixel_ratio,
+                elapsed_execution_seconds=word.elapsed_seconds,
             )
-            raise WordNotAcceptedError(result.word)
+        self.logger.info(
+            "runtime.level.completed",
+            detected_level=plan.level,
+            number_of_solution_words=len(result.words),
+        )
+        return result.home_capture
 
     def _classify(self, capture: ScreenCapture) -> ScreenClassification:
         started = self.clock()
@@ -377,6 +407,8 @@ def build_runtime(
     letter_recognizer: WheelLetterRecognitionPort | None = None,
     level_number_recognizer: LevelNumberRecognitionPort | None = None,
     word_acceptance_verifier: WordAcceptanceVerifier | None = None,
+    home_level_button_detector: HomeLevelButtonPort | None = None,
+    popup_close_button_detector: PopupCloseButtonPort | None = None,
     clock: Clock = time.monotonic,
     sleeper: Sleeper = time.sleep,
 ) -> ApplicationRuntime:
@@ -386,6 +418,13 @@ def build_runtime(
     levels = level_factory()
     planner = SwipePathPlanner()
     decisions = DecisionEngine()
+    classifier = screen_classifier or ScreenClassifier()
+    single_word_executor = SingleWordExecutor(
+        android,
+        word_acceptance_verifier or ImageDifferenceWordAcceptanceVerifier(),
+        sleeper=sleeper,
+        clock=clock,
+    )
     return ApplicationRuntime(
         settings=settings,
         logger=runtime_logger,
@@ -396,16 +435,20 @@ def build_runtime(
         game_loop=GameLoop(android, levels, planner, decisions),
         advertisements=AdvertisementPolicy(),
         recovery=RecoveryStrategy(RetryPolicy(), TimeoutPolicy()),
-        screen_classifier=screen_classifier or ScreenClassifier(),
+        screen_classifier=classifier,
         wheel_detector=wheel_detector or LetterWheelDetector(),
         letter_recognizer=letter_recognizer or WheelLetterRecognizer(),
         level_number_recognizer=level_number_recognizer or LevelNumberRecognizer(),
         solution_planner=LevelSolutionPlanner(levels, planner),
-        word_executor=SingleWordExecutor(
+        level_executor=LevelExecutor(
             android,
-            word_acceptance_verifier or ImageDifferenceWordAcceptanceVerifier(),
+            single_word_executor,
+            classifier,
+            popup_close_button_detector or UpperRightPopupCloseDetector(),
             sleeper=sleeper,
-            clock=clock,
+        ),
+        home_level_button_detector=(
+            home_level_button_detector or YellowLevelButtonDetector()
         ),
         clock=clock,
         sleeper=sleeper,
