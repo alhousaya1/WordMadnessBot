@@ -8,14 +8,19 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, cast
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from word_madness_bot.application.ports.android import AndroidPort
 from word_madness_bot.bootstrap import build_runtime
 from word_madness_bot.config.logging import configure_logging
 from word_madness_bot.config.settings import Settings
 from word_madness_bot.domain.geometry import PixelPoint, ScreenSize
-from word_madness_bot.domain.models import DeviceDescriptor, DeviceState, ScreenCapture
+from word_madness_bot.domain.models import (
+    DeviceDescriptor,
+    DeviceState,
+    ScreenCapture,
+    SwipePath,
+)
 from word_madness_bot.infrastructure.levels.json_repository import JsonLevelRepository
 
 
@@ -23,6 +28,7 @@ class Android:
     def __init__(self, captures: tuple[ScreenCapture, ...]) -> None:
         self.captures = iter(captures)
         self.taps: list[PixelPoint] = []
+        self.swipes: list[SwipePath] = []
 
     def select_device(self, serial: str | None = None) -> DeviceDescriptor:
         return DeviceDescriptor("integration", DeviceState.ONLINE)
@@ -35,6 +41,9 @@ class Android:
 
     def tap(self, point: PixelPoint) -> None:
         self.taps.append(point)
+
+    def swipe(self, path: SwipePath) -> None:
+        self.swipes.append(path)
 
     def __getattr__(self, name: str) -> Any:
         return lambda *args, **kwargs: None
@@ -57,11 +66,16 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     popup = fixtures / "daily_dash_popup.png"
     home = fixtures / "home_screen.png"
     level = fixtures / "level_screen.png"
+    after_image = Image.open(level).convert("L")
+    ImageDraw.Draw(after_image).rectangle((480, 500, 700, 650), fill=0)
+    after_bytes = io.BytesIO()
+    after_image.save(after_bytes, format="PNG")
     android = Android(
         (
             ScreenCapture(popup.read_bytes(), ScreenSize(1440, 3120)),
             ScreenCapture(home.read_bytes(), ScreenSize(1440, 3120)),
             ScreenCapture(level.read_bytes(), ScreenSize(1440, 3120)),
+            ScreenCapture(after_bytes.getvalue(), ScreenSize(1440, 3120)),
         )
     )
     runtime = build_runtime(
@@ -74,6 +88,7 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     runtime.start()
     runtime.shutdown()
     assert android.taps == [PixelPoint(1290, 845), PixelPoint(720, 2040)]
+    assert len(android.swipes) == 1
     assert (tmp_path / "screenshot-1.png").exists()
     assert (tmp_path / "screenshot-2.png").exists()
     assert (tmp_path / "screenshot-3.png").exists()
@@ -95,3 +110,8 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     assert [item["word"] for item in solution["solutions"]] == [
         "DON", "DUN", "DUO", "FUN", "NOD", "FOND", "FUND", "FOUND"
     ]
+    swipe = json.loads((tmp_path / "swipe.json").read_text(encoding="utf-8"))
+    assert swipe["word"] == "DON"
+    assert swipe["accepted"] is True
+    assert (tmp_path / "word_before.png").exists()
+    assert (tmp_path / "word_after.png").exists()

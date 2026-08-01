@@ -22,12 +22,14 @@ class PlannedSolution:
     word: str
     indices: tuple[int, ...]
     coordinates: tuple[PixelPoint, ...]
+    duration_ms: int
 
     def to_dict(self) -> dict[str, object]:
         return {
             "word": self.word,
             "indices": list(self.indices),
             "coordinates": [{"x": point.x, "y": point.y} for point in self.coordinates],
+            "duration_ms": self.duration_ms,
         }
 
 
@@ -86,7 +88,7 @@ class LevelSolutionPlanner:
                 path = self.path_planner.plan(letters, word, screen)
             except SwipePlanningError as error:
                 raise SolutionPlanningError(str(error)) from error
-            solutions.append(PlannedSolution(word, indices, path.points))
+            solutions.append(PlannedSolution(word, indices, path.points, path.duration_ms))
         return LevelSolutionPlan(
             level.number,
             tuple(letter.character for letter in letters),

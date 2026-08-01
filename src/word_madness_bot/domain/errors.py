@@ -115,6 +115,18 @@ class SolutionPlanningError(WorkflowError):
     """Raised when a detected level cannot produce a complete solution plan."""
 
 
+class WordExecutionError(WorkflowError):
+    """Raised when a single-word execution or verification fails."""
+
+
+class WordNotAcceptedError(WordExecutionError):
+    """Raised when the attempted word does not change the level board."""
+
+    def __init__(self, word: str) -> None:
+        self.word = word
+        super().__init__(f"Word was not accepted: {word}")
+
+
 class WorkflowTimeoutError(WorkflowError):
     """Raised when a workflow reaches its configured polling bound."""
 
