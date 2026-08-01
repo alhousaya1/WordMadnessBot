@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import subprocess
+from pathlib import Path
 from typing import Any, cast
 
 from word_madness_bot.config.logging import configure_logging
@@ -21,7 +22,9 @@ def _result(stdout: str = "") -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_production_adapter_selects_stock_android_monkey_script_backend() -> None:
+def test_production_adapter_selects_stock_android_monkey_script_backend(
+    tmp_path: Path,
+) -> None:
     calls: list[list[str]] = []
     log_stream = io.StringIO()
 
@@ -32,7 +35,7 @@ def test_production_adapter_selects_stock_android_monkey_script_backend() -> Non
         return _result()
 
     adapter = AdbClient(
-        Settings(adb_retries=0),
+        Settings(adb_retries=0, debug_directory=tmp_path),
         configure_logging(name="test.adb.swipe.backend", stream=log_stream),
         runner=runner,
     )
@@ -58,3 +61,8 @@ def test_production_adapter_selects_stock_android_monkey_script_backend() -> Non
         "backend": "monkey_script",
         "backend_command": monkey_command[-5:],
     }
+    script = (tmp_path / "swipe_script.txt").read_text(encoding="utf-8")
+    pointer_events = [line for line in script.splitlines() if line.startswith("DispatchPointer")]
+    assert [event.split(",")[2] for event in pointer_events] == ["0", "2", "2", "1"]
+    assert pointer_events[-2].split(",")[3:5] == ["500", "600"]
+    assert pointer_events[-1].split(",")[3:5] == ["500", "600"]
