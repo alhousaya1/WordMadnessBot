@@ -14,11 +14,7 @@ from word_madness_bot.application.word_execution import (
 )
 from word_madness_bot.domain.errors import WordExecutionError
 from word_madness_bot.domain.geometry import PixelPoint, ScreenSize
-from word_madness_bot.domain.models import (
-    ScreenCapture,
-    SwipeExecutionReceipt,
-    SwipePath,
-)
+from word_madness_bot.domain.models import ScreenCapture, SwipePath
 
 
 def _capture(*, changed: bool = False) -> ScreenCapture:
@@ -57,9 +53,8 @@ class Android:
         self.swipes: list[SwipePath] = []
         self.captures = 0
 
-    def swipe(self, path: SwipePath) -> SwipeExecutionReceipt:
+    def swipe(self, path: SwipePath) -> None:
         self.swipes.append(path)
-        return SwipeExecutionReceipt(("fake",), (0, path.duration_ms))
 
     def capture_screenshot(self) -> ScreenCapture:
         self.captures += 1
@@ -99,8 +94,6 @@ def test_executor_attempts_only_first_word_and_saves_all_evidence(tmp_path: Path
     assert payload["word"] == "AB"
     assert payload["accepted"] is True
     assert payload["duration_ms"] == 250
-    assert payload["timestamps_ms"] == [0, 250]
-    assert payload["backend_command"] == ["fake"]
 
 
 def test_verifier_rejects_mismatched_screen_sizes() -> None:

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 from word_madness_bot.application.ports.android import AndroidPort
 from word_madness_bot.config.logging import StructuredLogger
@@ -24,7 +26,6 @@ from word_madness_bot.domain.models import (
     DeviceState,
     DisplayMetrics,
     ScreenCapture,
-    SwipeExecutionReceipt,
     SwipePath,
 )
 from word_madness_bot.infrastructure.adb.screenshot import parse_png_size
@@ -103,28 +104,53 @@ class AdbClient(AndroidPort):
     def tap(self, point: PixelPoint) -> None:
         self._run_text(["shell", "input", "tap", str(point.x), str(point.y)], retry=False)
 
-    def swipe(self, path: SwipePath) -> SwipeExecutionReceipt:
+    def swipe(self, path: SwipePath) -> None:
         timestamps = tuple(
             round(index * path.duration_ms / (len(path.points) - 1))
             for index in range(len(path.points))
         )
-        first = path.points[0]
-        commands = [f"input motionevent DOWN {first.x} {first.y}"]
-        for index, point in enumerate(path.points[1:], start=1):
-            delay_ms = timestamps[index] - timestamps[index - 1]
-            commands.append(f"sleep {delay_ms / 1000:.3f}")
-            action = "UP" if index == len(path.points) - 1 else "MOVE"
-            commands.append(f"input motionevent {action} {point.x} {point.y}")
-        backend_command = ("shell", "sh", "-c", "; ".join(commands))
-        self._run_text(list(backend_command), retry=False)
+        script = _build_monkey_swipe_script(path, timestamps)
+        remote_path = "/data/local/tmp/word_madness_swipe.txt"
+        backend_command = ("shell", "monkey", "-f", remote_path, "1")
+        local_path: Path | None = None
+        script_pushed = False
+        self._logger.info(
+            "adb.swipe.backend_selected",
+            backend="monkey_script",
+            backend_command=list(backend_command),
+        )
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="\n",
+                suffix=".txt",
+                delete=False,
+            ) as stream:
+                stream.write(script)
+                local_path = Path(stream.name)
+            self._run_text(["push", str(local_path), remote_path], retry=False)
+            script_pushed = True
+            self._run_text(list(backend_command), retry=False)
+        finally:
+            if local_path is not None:
+                local_path.unlink(missing_ok=True)
+            if script_pushed:
+                try:
+                    self._run_text(["shell", "rm", "-f", remote_path], retry=False)
+                except AdbCommandError:
+                    self._logger.warning(
+                        "adb.swipe.cleanup_failed",
+                        remote_path=remote_path,
+                    )
         self._logger.info(
             "adb.swipe.executed",
             duration_ms=path.duration_ms,
             point_count=len(path.points),
+            backend="monkey_script",
             backend_command=list(backend_command),
             timestamps_ms=list(timestamps),
         )
-        return SwipeExecutionReceipt(backend_command, timestamps)
 
     def press_back(self) -> None:
         self._run_text(["shell", "input", "keyevent", "BACK"], retry=False)
@@ -209,6 +235,31 @@ class AdbClient(AndroidPort):
                 self._sleeper(min(0.1 * (2 ** (attempt - 1)), 1.0))
         raise failure
 
+
+def _build_monkey_swipe_script(
+    path: SwipePath,
+    timestamps: tuple[int, ...],
+) -> str:
+    events: list[str] = []
+    down_time = 1
+    for index, point in enumerate(path.points):
+        if index:
+            events.append(f"UserWait({timestamps[index] - timestamps[index - 1]})")
+        action = 0 if index == 0 else 1 if index == len(path.points) - 1 else 2
+        pressure = 0.0 if action == 1 else 1.0
+        events.append(
+            "DispatchPointer("
+            f"{down_time},{timestamps[index] + down_time},{action},"
+            f"{point.x},{point.y},{pressure},1.0,0,1.0,1.0,0,0)"
+        )
+    return (
+        "type= raw events\n"
+        f"count= {len(events)}\n"
+        "speed= 1.0\n"
+        "start data >>\n"
+        + "\n".join(events)
+        + "\n"
+    )
 
 def _parse_devices(output: str) -> tuple[DeviceDescriptor, ...]:
     devices: list[DeviceDescriptor] = []

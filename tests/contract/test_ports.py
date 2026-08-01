@@ -10,7 +10,6 @@ from word_madness_bot.domain.models import (
     DisplayMetrics,
     Level,
     ScreenCapture,
-    SwipeExecutionReceipt,
     SwipePath,
     VisionObservation,
 )
@@ -36,8 +35,8 @@ class FakeAndroid:
     def tap(self, point: PixelPoint) -> None:
         return None
 
-    def swipe(self, path: SwipePath) -> SwipeExecutionReceipt:
-        return SwipeExecutionReceipt(("fake",), (0, path.duration_ms))
+    def swipe(self, path: SwipePath) -> None:
+        return None
 
     def press_back(self) -> None:
         return None

@@ -75,26 +75,6 @@ class SwipePath:
 
 
 @dataclass(frozen=True, slots=True)
-class SwipeExecutionReceipt:
-    """Backend evidence for one continuous gesture command."""
-
-    backend_command: tuple[str, ...]
-    timestamps_ms: tuple[int, ...]
-
-    def __post_init__(self) -> None:
-        if not self.backend_command:
-            raise DomainValidationError("Swipe backend command cannot be empty")
-        if len(self.timestamps_ms) < 2:
-            raise DomainValidationError("Swipe execution requires at least two timestamps")
-        if self.timestamps_ms[0] != 0:
-            raise DomainValidationError("Swipe timestamps must begin at zero")
-        if any(current <= previous for previous, current in zip(
-            self.timestamps_ms, self.timestamps_ms[1:], strict=False
-        )):
-            raise DomainValidationError("Swipe timestamps must increase")
-
-
-@dataclass(frozen=True, slots=True)
 class Level:
     """Validated data-driven words for one game level."""
 

@@ -10,7 +10,6 @@ from word_madness_bot.domain.models import (
     DeviceDescriptor,
     DisplayMetrics,
     ScreenCapture,
-    SwipeExecutionReceipt,
     SwipePath,
 )
 
@@ -43,7 +42,7 @@ class AndroidPort(Protocol):
         """Execute one tap at a completed device coordinate."""
         ...
 
-    def swipe(self, path: SwipePath) -> SwipeExecutionReceipt:
+    def swipe(self, path: SwipePath) -> None:
         """Execute one completed swipe path."""
         ...
 

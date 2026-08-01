@@ -6,6 +6,7 @@ import io
 import struct
 import subprocess
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -186,29 +187,38 @@ def test_missing_executable_is_typed_without_retry() -> None:
         client(runner, retries=3).discover_devices()
     assert calls == 1
 
+
 def test_swipe_emits_one_continuous_multi_point_motion_gesture() -> None:
     calls: list[list[str]] = []
+    script = ""
 
     def runner(command: list[str], **kwargs: object) -> Any:
+        nonlocal script
         calls.append(command)
         if "devices" in command:
             return result("List of devices attached\na device\n")
+        if "push" in command:
+            script = Path(command[-2]).read_text(encoding="utf-8")
         return result()
 
     adapter = client(runner)
     adapter.select_device()
-    receipt = adapter.swipe(
+    adapter.swipe(
         SwipePath(
             (PixelPoint(10, 20), PixelPoint(30, 40), PixelPoint(50, 60)),
             180,
         )
     )
-    assert len(calls) == 2
-    assert calls[1][-4:-1] == ["shell", "sh", "-c"]
-    assert calls[1][-1] == (
-        "input motionevent DOWN 10 20; sleep 0.090; "
-        "input motionevent MOVE 30 40; sleep 0.090; "
-        "input motionevent UP 50 60"
-    )
-    assert receipt.backend_command == tuple(calls[1][-4:])
-    assert receipt.timestamps_ms == (0, 90, 180)
+    assert len(calls) == 4
+    assert calls[2][-5:] == [
+        "shell",
+        "monkey",
+        "-f",
+        "/data/local/tmp/word_madness_swipe.txt",
+        "1",
+    ]
+    assert "DispatchPointer(1,1,0,10,20,1.0" in script
+    assert "UserWait(90)" in script
+    assert "DispatchPointer(1,91,2,30,40,1.0" in script
+    assert "DispatchPointer(1,181,1,50,60,0.0" in script
+    assert "input motionevent" not in script

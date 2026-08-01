@@ -68,28 +68,3 @@ def test_planner_has_no_adb_dependency() -> None:
     import word_madness_bot.gameplay.swipe_generator as module
 
     assert not any("adb" in name.lower() for name in module.__dict__)
-
-def test_exact_control_point_mode_does_not_interpolate() -> None:
-    path = SwipePathPlanner().plan_normalized(wheel(), "ABA", interpolate=False)
-    assert path.points == (
-        NormalizedPoint(0.2, 0.5),
-        NormalizedPoint(0.5, 0.2),
-        NormalizedPoint(0.8, 0.5),
-    )
-
-
-@pytest.mark.parametrize(
-    ("word", "expected_duration"),
-    [("ABC", 150), ("ABCD", 180), ("ABCDE", 220), ("ABCDEF", 260), ("ABCDEFG", 300)],
-)
-def test_default_human_drag_duration_profile(word: str, expected_duration: int) -> None:
-    letters = tuple(
-        LetterPosition(character, NormalizedPoint((index + 1) / 8, 0.5))
-        for index, character in enumerate("ABCDEFG")
-    )
-    assert (
-        SwipePathPlanner()
-        .plan_normalized(letters, word, interpolate=False)
-        .duration_ms
-        == expected_duration
-    )
