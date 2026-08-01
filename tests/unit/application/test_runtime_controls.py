@@ -73,3 +73,15 @@ def test_detects_settings_layout_without_touching_internal_controls() -> None:
             draw.rectangle((left, top, left + 16, top + 24), fill="white")
 
     assert CompletionOverlayDetector().settings_visible(_drawn_capture(image))
+
+
+def test_large_intelligent_heading_is_primary_completion_home_signal() -> None:
+    image = Image.new("RGB", (400, 800), (25, 30, 45))
+    draw = ImageDraw.Draw(image)
+    for index in range(11):
+        left = 45 + index * 28
+        draw.rectangle((left, 105, left + 15, 150), fill=(245, 245, 245))
+
+    capture = _drawn_capture(image)
+
+    assert CompletionOverlayDetector().completion_home_visible(capture)

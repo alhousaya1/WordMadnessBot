@@ -19,6 +19,10 @@ from word_madness_bot.application.runtime_controls import (
     PopupCloseButtonPort,
     UpperRightPopupCloseDetector,
 )
+from word_madness_bot.application.runtime_dispatcher import (
+    RuntimeScreenDispatcher,
+    RuntimeScreenState,
+)
 from word_madness_bot.application.solution_planning import (
     LevelSolutionPlan,
     LevelSolutionPlanner,
@@ -71,7 +75,6 @@ AndroidFactory = Callable[[Settings, StructuredLogger], AndroidPort]
 LevelFactory = Callable[[], LevelRepository]
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
-START_LEVEL_POINT = NormalizedPoint(0.500, 0.654)
 
 
 class RuntimeScreenClassifier(Protocol):
@@ -104,79 +107,88 @@ class ApplicationRuntime:
     _started: bool = False
 
     def start(self, *, dry_run: bool = False, max_levels: int | None = None) -> None:
-        """Run complete levels continuously, unless a test supplies a level bound."""
+        """Dispatch any current game screen until the requested levels are complete."""
         if max_levels is not None and max_levels <= 0:
             raise ValueError("max_levels must be positive")
         self.logger.info("runtime.starting", dry_run=dry_run)
-        if not dry_run:
-            device = self.android.select_device()
-            self.android.verify_connection()
-            self.logger.info("runtime.device.ready", serial=device.serial)
-            screenshot_number = 1
-            capture = self._capture_debug_screenshot(
-                f"screenshot-{screenshot_number}.png"
-            )
-            classification = self._classify(capture)
+        if dry_run:
+            self._started = True
+            self.logger.info("runtime.started", dry_run=True)
+            return
 
-            if classification.screen is ScreenType.DAILY_DASH_POPUP:
-                if classification.close_button is None:
-                    self._raise_navigation_failure(
-                        classification, reason="daily_dash_close_not_found"
+        device = self.android.select_device()
+        self.android.verify_connection()
+        self.logger.info("runtime.device.ready", serial=device.serial)
+        dispatcher = RuntimeScreenDispatcher(
+            self._classify,
+            self.level_executor.completion_overlay_detector,
+            self.level_executor.popup_close_detector,
+        )
+        completed_levels = 0
+        screenshot_number = 0
+        awaiting_level = False
+
+        while max_levels is None or completed_levels < max_levels:
+            screenshot_number += 1
+            capture = self._capture_debug_screenshot(f"screenshot-{screenshot_number}.png")
+            dispatch = dispatcher.dispatch(capture)
+            self.logger.info("runtime.screen.dispatched", runtime_state=dispatch.state.value)
+
+            if dispatch.state is RuntimeScreenState.LEVEL:
+                if awaiting_level and dispatch.classification is not None:
+                    self.logger.info(
+                        "runtime.level.entered",
+                        template_confidence=dispatch.classification.confidence,
                     )
-                region = classification.close_button
-                point = PixelPoint(
-                    region.left + region.width // 2,
-                    region.top + region.height // 2,
-                )
-                self.logger.info("runtime.daily_dash.tap", tap_x=point.x, tap_y=point.y)
+                awaiting_level = False
+                level_number = self.level_number_recognizer.recognize(capture)
+                self.logger.info("runtime.level.detected", detected_level=level_number)
+                self._solve_detected_level(capture, level_number)
+                completed_levels += 1
+                continue
+
+            if dispatch.state in {
+                RuntimeScreenState.NORMAL_HOME,
+                RuntimeScreenState.COMPLETION_HOME,
+            }:
+                point = dispatch.action_point
+                if point is None:
+                    raise RuntimeNavigationError("Home dispatcher did not provide a Level tap")
+                self._log_start_level(point)
                 self.android.tap(point)
+                awaiting_level = True
+                self.sleeper(3.0)
+                continue
+
+            if dispatch.action_point is not None:
+                self.android.tap(dispatch.action_point)
                 self.sleeper(0.5)
-                screenshot_number += 1
-                capture = self._capture_debug_screenshot(
-                    f"screenshot-{screenshot_number}.png"
-                )
-                classification = self._classify(capture)
+                continue
 
-            completed_levels = 0
-            if classification.screen is ScreenType.LEVEL_SCREEN:
-                level_number = self.level_number_recognizer.recognize(capture)
-                self.logger.info(
-                    "runtime.level.detected",
-                    detected_level=level_number,
-                )
-                capture = self._solve_detected_level(capture, level_number)
-                completed_levels += 1
-            elif classification.screen is not ScreenType.HOME_SCREEN:
-                self._raise_navigation_failure(
-                    classification, reason="home_screen_not_reached"
-                )
+            if awaiting_level:
+                point = NormalizedPoint(0.500, 0.654).to_pixels(capture.size)
+                self._log_start_level(point)
+                self.android.tap(point)
+                self.sleeper(3.0)
+                continue
 
-            while max_levels is None or completed_levels < max_levels:
-                point = START_LEVEL_POINT.to_pixels(capture.size)
-                self.logger.info(
-                    "runtime.start_level.detected",
-                    button_left=point.x,
-                    button_top=point.y,
-                    button_width=0,
-                    button_height=0,
-                    ocr_crop_width=0,
-                    ocr_crop_height=0,
-                    template_confidence=None,
-                )
-                capture, classification = self._enter_level(point)
-                self.logger.info(
-                    "runtime.level.entered",
-                    template_confidence=classification.confidence,
-                )
-                level_number = self.level_number_recognizer.recognize(capture)
-                self.logger.info(
-                    "runtime.level.detected",
-                    detected_level=level_number,
-                )
-                capture = self._solve_detected_level(capture, level_number)
-                completed_levels += 1
+            self.sleeper(0.5)
+
         self._started = True
-        self.logger.info("runtime.started", dry_run=dry_run)
+        self.logger.info("runtime.started", dry_run=False)
+
+    def _log_start_level(self, point: PixelPoint) -> None:
+        self.logger.info(
+            "runtime.start_level.detected",
+            button_left=point.x,
+            button_top=point.y,
+            button_width=0,
+            button_height=0,
+            ocr_crop_width=0,
+            ocr_crop_height=0,
+            template_confidence=None,
+        )
+        self.logger.info("runtime.start_level.tap", tap_x=point.x, tap_y=point.y)
 
     def _solve_detected_level(
         self,
@@ -206,6 +218,7 @@ class ApplicationRuntime:
             classification = self._classify(capture)
             if classification.screen is ScreenType.LEVEL_SCREEN:
                 return capture, classification
+
     def _raise_navigation_failure(
         self,
         classification: ScreenClassification,
@@ -219,8 +232,7 @@ class ApplicationRuntime:
             template_confidence=classification.confidence,
         )
         raise RuntimeNavigationError(
-            f"Unable to enter level: {reason} "
-            f"(detected {classification.screen.value})"
+            f"Unable to enter level: {reason} (detected {classification.screen.value})"
         )
 
     def _detect_wheel_geometry(self, capture: ScreenCapture) -> LetterWheelGeometry:
@@ -295,9 +307,7 @@ class ApplicationRuntime:
     ) -> LevelSolutionPlan:
         started = self.clock()
         try:
-            plan = self.solution_planner.plan(
-                level_number, recognition, geometry, capture.size
-            )
+            plan = self.solution_planner.plan(level_number, recognition, geometry, capture.size)
             output_path = save_level_solution(plan, self.settings.debug_directory)
         except WordMadnessError as error:
             self.logger.exception(
@@ -322,15 +332,13 @@ class ApplicationRuntime:
         plan: LevelSolutionPlan,
     ) -> ScreenCapture:
         try:
-            result = self.level_executor.execute(
-                plan, before, self.settings.debug_directory
-            )
+            result = self.level_executor.execute(plan, before, self.settings.debug_directory)
         except WordNotAcceptedError as error:
             self.logger.error(
                 "runtime.word.not_accepted",
                 executed_word=error.word,
                 acceptance_verification=False,
-            changed_pixel_ratio=error.changed_pixel_ratio,
+                changed_pixel_ratio=error.changed_pixel_ratio,
             )
             raise
         except WordMadnessError as error:

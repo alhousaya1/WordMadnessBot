@@ -442,6 +442,7 @@ def test_completed_level_automatically_starts_the_next_level(tmp_path: Path) -> 
         home,
         ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
         home,
+        home,
         ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
         home,
     )
