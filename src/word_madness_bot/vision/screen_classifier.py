@@ -8,9 +8,14 @@ from importlib import import_module
 from importlib.resources import files
 from typing import Any, ClassVar
 
-from word_madness_bot.domain.errors import ImageDecodeError, VisionError
+from word_madness_bot.domain.errors import (
+    ImageDecodeError,
+    VisionError,
+    WheelGeometryDetectionError,
+)
 from word_madness_bot.domain.geometry import PixelRect
 from word_madness_bot.domain.models import ScreenCapture
+from word_madness_bot.vision.wheel_geometry import LetterWheelDetector
 
 
 class ScreenType(StrEnum):
@@ -31,6 +36,10 @@ class ScreenClassification:
     close_button: PixelRect | None = None
     start_button: PixelRect | None = None
     start_button_confidence: float | None = None
+    level_template_confidence: float | None = None
+    level_template_matched: bool | None = None
+    wheel_visible: bool | None = None
+    wheel_detection_error: str | None = None
 
     def __post_init__(self) -> None:
         if not 0 <= self.confidence <= 1:
@@ -66,16 +75,29 @@ class ScreenClassifier:
         """Return the strongest supported screen and matched action control."""
         source = _decode_png(capture.data)
         popup_confidence, _ = _match(source, self._templates[ScreenType.DAILY_DASH_POPUP])
+        home_confidence, _ = _match(source, self._templates[ScreenType.HOME_SCREEN])
+        level_confidence, _ = _match(source, self._templates[ScreenType.LEVEL_SCREEN])
+        try:
+            LetterWheelDetector().detect(capture)
+        except WheelGeometryDetectionError as error:
+            wheel_visible = False
+            wheel_detection_error = str(error)
+        else:
+            return ScreenClassification(
+                ScreenType.LEVEL_SCREEN,
+                1.0,
+                level_template_confidence=level_confidence,
+                level_template_matched=level_confidence >= self.minimum_confidence,
+                wheel_visible=True,
+            )
+
         if popup_confidence >= self.minimum_confidence:
             confidence, screen = popup_confidence, ScreenType.DAILY_DASH_POPUP
+        elif home_confidence >= level_confidence:
+            confidence, screen = home_confidence, ScreenType.HOME_SCREEN
         else:
-            home_confidence, _ = _match(source, self._templates[ScreenType.HOME_SCREEN])
-            level_confidence, _ = _match(source, self._templates[ScreenType.LEVEL_SCREEN])
-            if home_confidence >= level_confidence:
-                confidence, screen = home_confidence, ScreenType.HOME_SCREEN
-            else:
-                confidence, screen = level_confidence, ScreenType.LEVEL_SCREEN
-        completion_button = None
+            confidence, screen = level_confidence, ScreenType.LEVEL_SCREEN
+
         if confidence < self.minimum_confidence:
             completion_button = _find_yellow_level_button(_decode_png_color(capture.data))
             if completion_button is not None:
@@ -84,9 +106,19 @@ class ScreenClassifier:
                     1.0,
                     start_button=completion_button,
                     start_button_confidence=1.0,
+                    level_template_confidence=level_confidence,
+                    level_template_matched=False,
+                    wheel_visible=wheel_visible,
+                    wheel_detection_error=wheel_detection_error,
                 )
-        if confidence < self.minimum_confidence:
-            return ScreenClassification(ScreenType.UNKNOWN, confidence)
+            return ScreenClassification(
+                ScreenType.UNKNOWN,
+                confidence,
+                level_template_confidence=level_confidence,
+                level_template_matched=False,
+                wheel_visible=wheel_visible,
+                wheel_detection_error=wheel_detection_error,
+            )
 
         close_button = None
         start_button = None
@@ -105,6 +137,10 @@ class ScreenClassifier:
             close_button,
             start_button,
             start_button_confidence,
+            level_template_confidence=level_confidence,
+            level_template_matched=level_confidence >= self.minimum_confidence,
+            wheel_visible=wheel_visible,
+            wheel_detection_error=wheel_detection_error,
         )
 
 

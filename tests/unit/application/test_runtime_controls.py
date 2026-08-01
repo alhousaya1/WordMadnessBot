@@ -72,8 +72,14 @@ def test_detects_settings_layout_without_touching_internal_controls() -> None:
     for top in (150, 260, 370, 480, 590):
         for left in (70, 95, 120, 145, 170, 195):
             draw.rectangle((left, top, left + 16, top + 24), fill="white")
+    for top in (150, 260):
+        draw.rounded_rectangle((250, top, 350, top + 48), radius=24, fill=(45, 180, 80))
 
     assert CompletionOverlayDetector().settings_visible(_drawn_capture(image))
+
+
+def test_level_screen_is_not_detected_as_settings() -> None:
+    assert not CompletionOverlayDetector().settings_visible(_capture("level_screen.png"))
 
 
 def test_large_intelligent_heading_is_primary_completion_home_signal() -> None:

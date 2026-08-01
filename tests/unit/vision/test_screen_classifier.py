@@ -40,6 +40,22 @@ def test_classifies_supported_non_popup_screens(template: str, expected: ScreenT
     assert result.close_button is None
 
 
+def test_visible_wheel_overrides_failed_level_template() -> None:
+    screenshot = Path(__file__).parents[2] / "fixtures" / "images" / "level_screen.png"
+    capture = ScreenCapture(screenshot.read_bytes(), ScreenSize(1440, 3120))
+    classifier = ScreenClassifier()
+    classifier._templates[ScreenType.LEVEL_SCREEN] = classifier._templates[
+        ScreenType.HOME_SCREEN
+    ]
+
+    result = classifier.classify(capture)
+
+    assert result.screen is ScreenType.LEVEL_SCREEN
+    assert result.confidence == 1.0
+    assert result.wheel_visible is True
+    assert result.level_template_matched is False
+
+
 def test_classifies_daily_dash_and_locates_close_button() -> None:
     result = ScreenClassifier().classify(
         _capture(("daily_dash_popup.png", 30, 70), ("daily_dash_close.png", 600, 280))

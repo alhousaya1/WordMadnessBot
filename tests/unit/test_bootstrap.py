@@ -135,6 +135,9 @@ class FakeLevelNumberRecognizer:
 
 
 class FakeCompletionOverlayDetector:
+    def __init__(self, *completion_home: bool) -> None:
+        self.completion_home = iter(completion_home)
+
     def tap_to_continue_visible(self, capture: ScreenCapture) -> bool:
         return False
 
@@ -142,7 +145,7 @@ class FakeCompletionOverlayDetector:
         return False
 
     def completion_home_visible(self, capture: ScreenCapture) -> bool:
-        return False
+        return next(self.completion_home, False)
 
     def settings_visible(self, capture: ScreenCapture) -> bool:
         return False
@@ -194,6 +197,7 @@ def _build(
     wheel_detector: WheelGeometryDetector | None = None,
     letter_recognizer: WheelLetterRecognitionPort | None = None,
     acceptance_verifier: FakeAcceptanceVerifier | None = None,
+    completion_overlay_detector: FakeCompletionOverlayDetector | None = None,
 ) -> ApplicationRuntime:
     return build_runtime(
         Settings(debug_directory=directory),
@@ -208,7 +212,9 @@ def _build(
         level_number_recognizer=FakeLevelNumberRecognizer(),
         word_acceptance_verifier=acceptance_verifier or FakeAcceptanceVerifier(),
         popup_close_button_detector=FakePopupCloseDetector(),
-        completion_overlay_detector=FakeCompletionOverlayDetector(),
+        completion_overlay_detector=(
+            completion_overlay_detector or FakeCompletionOverlayDetector()
+        ),
         clock=clock,
         sleeper=(lambda _: None) if sleeper is None else sleeper,
     )
@@ -295,7 +301,7 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     )
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps == [3.0, 10.0, 1.2, 1.2, 1.0, 0.5]
+    assert sleeps == [5.0, 10.0, 1.2, 1.2, 1.0, 0.5]
     assert android.captures == 5
     assert classifier.calls == 3
     output = stream.getvalue()
@@ -318,6 +324,27 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     assert (tmp_path / "letter-wheel-geometry.json").exists()
 
 
+def test_completion_home_start_waits_before_first_level_detection(tmp_path: Path) -> None:
+    android = FakeAndroid()
+    sleeps: list[float] = []
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        sleeper=sleeps.append,
+        completion_overlay_detector=FakeCompletionOverlayDetector(True, False),
+    )
+
+    runtime.start(max_levels=1)
+
+    assert android.taps == [PixelPoint(540, 1569)]
+    assert sleeps[0] == 5.0
+    assert sleeps.count(5.0) == 1
+
+
 def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     android = FakeAndroid()
     classifier = FakeClassifier(
@@ -338,7 +365,7 @@ def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(100, 40), PixelPoint(540, 1569)]
-    assert sleeps == [0.5, 3.0, 10.0, 1.2, 1.2, 1.0, 0.5]
+    assert sleeps == [0.5, 5.0, 10.0, 1.2, 1.2, 1.0, 0.5]
     assert android.captures == 6
     assert classifier.calls == 4
 
@@ -356,7 +383,7 @@ def test_entry_retries_every_three_seconds_until_level_appears(tmp_path: Path) -
     _build(android, classifier, tmp_path, sleeper=sleeps.append).start(max_levels=1)
 
     assert android.taps == [PixelPoint(540, 1569), PixelPoint(540, 1569)]
-    assert sleeps[:3] == [3.0, 3.0, 10.0]
+    assert sleeps[:3] == [5.0, 3.0, 10.0]
 
 
 def test_capture_failure_is_logged_and_raised(tmp_path: Path) -> None:
@@ -406,6 +433,34 @@ def test_letter_recognition_failure_logs_and_raises(tmp_path: Path) -> None:
     with pytest.raises(OcrError, match="letters missing"):
         runtime.start(max_levels=1)
     assert '"event": "runtime.letters.recognition_failed"' in stream.getvalue()
+
+
+def test_unknown_screens_are_saved_sequentially_with_detector_diagnostics(
+    tmp_path: Path,
+) -> None:
+    android = FakeAndroid()
+    stream = io.StringIO()
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.UNKNOWN, 0.21),
+            ScreenClassification(ScreenType.UNKNOWN, 0.24),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        logger=configure_logging(name="test.unknown", stream=stream),
+    )
+
+    runtime.start(max_levels=1)
+
+    unknown_directory = tmp_path / "unknown"
+    assert (unknown_directory / "unknown-0001.png").read_bytes() == PNG
+    assert (unknown_directory / "unknown-0002.png").read_bytes() == PNG
+    output = stream.getvalue()
+    assert output.count('"event": "runtime.screen.unknown_saved"') == 2
+    assert '"level_template_matched": null' in output
+    assert '"wheel_check_passed": null' in output
 
 
 def test_dry_run_has_no_device_screenshot_or_classification_io(tmp_path: Path) -> None:

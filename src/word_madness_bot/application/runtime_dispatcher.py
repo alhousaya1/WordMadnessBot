@@ -106,7 +106,11 @@ class RuntimeScreenDispatcher:
                 classification,
             )
 
-        if self.overlays is not None and self.overlays.settings_visible(capture):
+        if (
+            classification.screen is ScreenType.UNKNOWN
+            and self.overlays is not None
+            and self.overlays.settings_visible(capture)
+        ):
             return RuntimeDispatch(
                 RuntimeScreenState.SETTINGS,
                 BACK_POINT.to_pixels(capture.size),

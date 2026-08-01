@@ -76,6 +76,7 @@ LevelFactory = Callable[[], LevelRepository]
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
 COMPLETION_HOME_TRANSITION_TIMEOUT_SECONDS = 23.0
+LEVEL_ENTRY_STABILIZATION_SECONDS = 5.0
 
 
 class RuntimeScreenClassifier(Protocol):
@@ -106,6 +107,7 @@ class ApplicationRuntime:
     clock: Clock = field(default=time.monotonic, repr=False)
     sleeper: Sleeper = field(default=time.sleep, repr=False)
     _started: bool = False
+    _unknown_screenshot_number: int = 0
 
     def start(self, *, dry_run: bool = False, max_levels: int | None = None) -> None:
         """Dispatch any current game screen until the requested levels are complete."""
@@ -174,9 +176,11 @@ class ApplicationRuntime:
                         )
                     self._log_start_level(point, dispatch.action_region)
                     self.android.tap(point)
+                    self.sleeper(LEVEL_ENTRY_STABILIZATION_SECONDS)
                 completion_home_attempts += 1
                 awaiting_level = False
-                self.sleeper(0.5)
+                if not should_tap:
+                    self.sleeper(0.5)
                 continue
 
             completion_home_started = None
@@ -189,7 +193,7 @@ class ApplicationRuntime:
                 self._log_start_level(point)
                 self.android.tap(point)
                 awaiting_level = True
-                self.sleeper(3.0)
+                self.sleeper(LEVEL_ENTRY_STABILIZATION_SECONDS)
                 continue
 
             if dispatch.action_point is not None:
@@ -404,8 +408,23 @@ class ApplicationRuntime:
             "runtime.screen.detected",
             detected_screen=result.screen.value,
             template_confidence=result.confidence,
+            level_template_confidence=result.level_template_confidence,
+            level_template_matched=result.level_template_matched,
+            wheel_check_passed=result.wheel_visible,
+            wheel_check_error=result.wheel_detection_error,
             elapsed_detection_seconds=self.clock() - started,
         )
+        if result.screen is ScreenType.UNKNOWN:
+            self._unknown_screenshot_number += 1
+            destination = self.settings.debug_directory / "unknown" / (
+                f"unknown-{self._unknown_screenshot_number:04d}.png"
+            )
+            save_screenshot(capture.data, destination)
+            self.logger.info(
+                "runtime.screen.unknown_saved",
+                output_filename=str(destination),
+                sequence_number=self._unknown_screenshot_number,
+            )
         return result
 
     def _capture_debug_screenshot(self, filename: str) -> ScreenCapture:

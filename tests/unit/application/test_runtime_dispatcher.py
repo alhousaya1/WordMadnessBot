@@ -124,6 +124,18 @@ def test_completion_home_is_primary_and_never_classifies_for_arrow() -> None:
     assert classifier.calls == 0
 
 
+def test_level_screen_has_priority_over_settings_and_never_dispatches_back() -> None:
+    classifier = Classifier(ScreenType.LEVEL_SCREEN)
+    result = RuntimeScreenDispatcher(
+        classifier.classify,
+        Overlays(settings=True),
+        Popup(),
+    ).dispatch(CAPTURE)
+
+    assert result.state is RuntimeScreenState.LEVEL
+    assert result.action_point is None
+
+
 def test_dispatches_generic_x_popup_to_its_center() -> None:
     result = RuntimeScreenDispatcher(
         Classifier(ScreenType.UNKNOWN).classify,
