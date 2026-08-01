@@ -112,6 +112,16 @@ class FakeLetterRecognizer:
         )
 
 
+class FakeLevelNumberRecognizer:
+    def __init__(self, number: int = 1) -> None:
+        self.number = number
+        self.calls = 0
+
+    def recognize(self, capture: ScreenCapture) -> int:
+        self.calls += 1
+        return self.number
+
+
 class FakeClassifier:
     def __init__(self, *results: ScreenClassification) -> None:
         default = ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99)
@@ -138,10 +148,13 @@ def _build(
         Settings(debug_directory=directory),
         logger=logger or StructuredLogger(logging.getLogger("test.runtime")),
         android_factory=lambda settings, supplied_logger: cast(AndroidPort, android),
-        level_factory=lambda: JsonLevelRepository.from_json('{"levels": []}'),
+        level_factory=lambda: JsonLevelRepository.from_json(
+            '{"levels":[{"number":1,"words":["AB","CAB"]}]}'
+        ),
         screen_classifier=classifier,
         wheel_detector=wheel_detector or FakeWheelDetector(),
         letter_recognizer=letter_recognizer or FakeLetterRecognizer(),
+        level_number_recognizer=FakeLevelNumberRecognizer(),
         clock=clock,
         sleeper=(lambda _: None) if sleeper is None else sleeper,
     )

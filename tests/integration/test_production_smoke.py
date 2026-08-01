@@ -44,7 +44,12 @@ def test_packaged_levels_and_templates_are_present() -> None:
     templates = files("word_madness_bot.resources.templates").joinpath("__init__.py")
     assert levels.is_file()
     assert templates.is_file()
-    assert JsonLevelRepository.from_package().all_levels() == ()
+    packaged_levels = JsonLevelRepository.from_package().all_levels()
+    assert len(packaged_levels) == 1
+    assert packaged_levels[0].number == 90
+    assert packaged_levels[0].words == (
+        "DON", "DUN", "DUO", "FUN", "NOD", "FOND", "FUND", "FOUND"
+    )
 
 
 def test_fake_backed_level_and_ad_workflow() -> None:

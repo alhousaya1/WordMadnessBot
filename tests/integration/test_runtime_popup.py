@@ -68,7 +68,7 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
         Settings(debug_directory=tmp_path),
         logger=configure_logging(name="test.popup.integration"),
         android_factory=lambda settings, logger: cast(AndroidPort, android),
-        level_factory=lambda: JsonLevelRepository.from_json('{"levels": []}'),
+        level_factory=JsonLevelRepository.from_package,
         sleeper=lambda _: None,
     )
     runtime.start()
@@ -89,3 +89,9 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     ]
     payload = json.loads((tmp_path / "letters.json").read_text(encoding="utf-8"))
     assert "".join(item["character"] for item in payload["letters"]) == "OUNFD"
+    solution = json.loads((tmp_path / "level_solution.json").read_text(encoding="utf-8"))
+    assert solution["level"] == 90
+    assert solution["recognized_letters"] == list("OUNFD")
+    assert [item["word"] for item in solution["solutions"]] == [
+        "DON", "DUN", "DUO", "FUN", "NOD", "FOND", "FUND", "FOUND"
+    ]
