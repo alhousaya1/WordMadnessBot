@@ -95,11 +95,9 @@ class LevelExecutor:
                 debug_directory,
             )
             if not result.acceptance.accepted:
-                raise WordNotAcceptedError(
-                    result.word, result.acceptance.changed_pixel_ratio
-                )
+                raise WordNotAcceptedError(result.word, result.acceptance.changed_pixel_ratio)
             results.append(result)
-            current = self.android.capture_screenshot()
+            current = result.after_capture
 
         self.sleeper(self.completion_animation_wait_seconds)
         while True:

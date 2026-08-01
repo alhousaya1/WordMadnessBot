@@ -138,6 +138,7 @@ class FakePopupCloseDetector:
     def detect(self, capture: ScreenCapture) -> PixelRect | None:
         return None
 
+
 class FakeAcceptanceVerifier:
     def __init__(self, *, accepted: bool = True) -> None:
         self.accepted = accepted
@@ -223,7 +224,7 @@ def test_start_captures_classifies_and_logs_level_entry(tmp_path: Path) -> None:
     )
     runtime.start(max_levels=1)
     assert (tmp_path / "screenshot-1.png").read_bytes() == PNG
-    assert (android.selected, android.verified, android.captures) == (1, 1, 8)
+    assert (android.selected, android.verified, android.captures) == (1, 1, 4)
     output = stream.getvalue()
     assert '"detected_screen": "level_screen"' in output
     assert '"template_confidence": 0.97' in output
@@ -256,6 +257,7 @@ def test_starting_on_level_screen_continues_solving_without_home_button(
     assert len(android.swipes) == 2
     assert runtime.level_number_recognizer.calls == 1  # type: ignore[attr-defined]
 
+
 def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     android = FakeAndroid()
     classifier = FakeClassifier(
@@ -278,8 +280,8 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     )
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps == [3.0, 10.0, 1.5, 0.5, 1.5, 0.5, 2.0]
-    assert android.captures == 8
+    assert sleeps == [3.0, 10.0, 1.2, 1.2, 2.0]
+    assert android.captures == 4
     assert classifier.calls == 3
     output = stream.getvalue()
     detected_index = output.index('"event": "runtime.start_level.detected"')
@@ -321,8 +323,8 @@ def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(100, 40), PixelPoint(540, 1569)]
-    assert sleeps == [0.5, 3.0, 10.0, 1.5, 0.5, 1.5, 0.5, 2.0]
-    assert android.captures == 9
+    assert sleeps == [0.5, 3.0, 10.0, 1.2, 1.2, 2.0]
+    assert android.captures == 5
     assert classifier.calls == 4
 
 
@@ -340,6 +342,7 @@ def test_entry_retries_every_three_seconds_until_level_appears(tmp_path: Path) -
 
     assert android.taps == [PixelPoint(540, 1569), PixelPoint(540, 1569)]
     assert sleeps[:3] == [3.0, 3.0, 10.0]
+
 
 def test_capture_failure_is_logged_and_raised(tmp_path: Path) -> None:
     stream = io.StringIO()
@@ -413,7 +416,7 @@ def test_rejected_first_word_logs_and_stops(tmp_path: Path) -> None:
     )
     with pytest.raises(WordNotAcceptedError, match="AB"):
         runtime.start(max_levels=1)
-    assert len(android.swipes) == 1
+    assert len(android.swipes) == 2
     assert (tmp_path / "swipe.json").exists()
     assert '"event": "runtime.word.not_accepted"' in stream.getvalue()
 
