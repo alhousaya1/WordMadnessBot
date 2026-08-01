@@ -141,6 +141,12 @@ class FakeCompletionOverlayDetector:
     def daily_celebration_visible(self, capture: ScreenCapture) -> bool:
         return False
 
+    def completion_home_visible(self, capture: ScreenCapture) -> bool:
+        return False
+
+    def settings_visible(self, capture: ScreenCapture) -> bool:
+        return False
+
 
 class FakePopupCloseDetector:
     def detect(self, capture: ScreenCapture) -> PixelRect | None:
