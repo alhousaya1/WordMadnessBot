@@ -34,6 +34,7 @@ from word_madness_bot.vision.letter_recognition import (
     WheelLetterRecognition,
     WheelLetterRecognitionPort,
 )
+from word_madness_bot.vision.level_number import LevelNumberRecognitionPort
 from word_madness_bot.vision.screen_classifier import ScreenClassification, ScreenType
 from word_madness_bot.vision.wheel_geometry import (
     LetterPosition,
@@ -198,6 +199,7 @@ def _build(
     letter_recognizer: WheelLetterRecognitionPort | None = None,
     acceptance_verifier: FakeAcceptanceVerifier | None = None,
     completion_overlay_detector: FakeCompletionOverlayDetector | None = None,
+    level_number_recognizer: LevelNumberRecognitionPort | None = None,
 ) -> ApplicationRuntime:
     return build_runtime(
         Settings(debug_directory=directory),
@@ -209,7 +211,7 @@ def _build(
         screen_classifier=classifier,
         wheel_detector=wheel_detector or FakeWheelDetector(),
         letter_recognizer=letter_recognizer or FakeLetterRecognizer(),
-        level_number_recognizer=FakeLevelNumberRecognizer(),
+        level_number_recognizer=level_number_recognizer or FakeLevelNumberRecognizer(),
         word_acceptance_verifier=acceptance_verifier or FakeAcceptanceVerifier(),
         popup_close_button_detector=FakePopupCloseDetector(),
         completion_overlay_detector=(
@@ -508,3 +510,42 @@ def test_completed_level_automatically_starts_the_next_level(tmp_path: Path) -> 
 
     assert len(android.swipes) == 4
     assert android.taps == [PixelPoint(540, 1569), PixelPoint(540, 1569)]
+
+
+class RetryingLevelNumberRecognizer:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.last_candidates: tuple[str, ...] = ()
+
+    def recognize(self, capture: ScreenCapture) -> int:
+        self.calls += 1
+        if self.calls < 3:
+            self.last_candidates = ("( }",)
+            raise OcrError("invalid level text")
+        self.last_candidates = ("1",)
+        return 1
+
+
+def test_level_ocr_retries_with_fresh_screenshots(tmp_path: Path) -> None:
+    android = FakeAndroid()
+    recognizer = RetryingLevelNumberRecognizer()
+    sleeps: list[float] = []
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        sleeper=sleeps.append,
+        level_number_recognizer=recognizer,
+    )
+
+    runtime.start(max_levels=1)
+
+    assert recognizer.calls == 3
+    assert sleeps[:2] == [0.5, 0.5]
+    assert (tmp_path / "level-ocr-retry-1.png").exists()
+    assert (tmp_path / "level-ocr-retry-2.png").exists()

@@ -36,6 +36,7 @@ from word_madness_bot.application.word_execution import (
 from word_madness_bot.config.logging import StructuredLogger, configure_logging
 from word_madness_bot.config.settings import Settings
 from word_madness_bot.domain.errors import (
+    LevelNotFoundError,
     OcrError,
     RuntimeNavigationError,
     ScreenshotError,
@@ -148,7 +149,10 @@ class ApplicationRuntime:
                         template_confidence=dispatch.classification.confidence,
                     )
                 awaiting_level = False
-                level_number = self.level_number_recognizer.recognize(capture)
+                recognized = self._recognize_level_with_retries(capture)
+                if recognized is None:
+                    continue
+                level_number, capture = recognized
                 self.logger.info("runtime.level.detected", detected_level=level_number)
                 self._solve_detected_level(capture, level_number)
                 completed_levels += 1
@@ -212,6 +216,44 @@ class ApplicationRuntime:
 
         self._started = True
         self.logger.info("runtime.started", dry_run=False)
+
+    def _recognize_level_with_retries(
+        self, capture: ScreenCapture, *, attempts: int = 3
+    ) -> tuple[int, ScreenCapture] | None:
+        """Retry OCR on fresh frames, then return control to screen dispatch."""
+        for attempt in range(1, attempts + 1):
+            try:
+                number = self.level_number_recognizer.recognize(capture)
+                self.levels.get_level(number)
+            except (OcrError, LevelNotFoundError) as error:
+                self.logger.warning(
+                    "runtime.level.ocr_failed",
+                    attempt=attempt,
+                    maximum_attempts=attempts,
+                    raw_candidates=list(
+                        getattr(self.level_number_recognizer, "last_candidates", ())
+                    ),
+                    error=str(error),
+                )
+                if attempt == attempts:
+                    self.logger.error(
+                        "runtime.level.ocr_recovery",
+                        reason="attempts_exhausted",
+                    )
+                    return None
+                self.sleeper(0.5)
+                capture = self._capture_debug_screenshot(f"level-ocr-retry-{attempt}.png")
+                classification = self._classify(capture)
+                if classification.screen is not ScreenType.LEVEL_SCREEN:
+                    self.logger.info(
+                        "runtime.level.ocr_recovery",
+                        reason="screen_changed",
+                        detected_screen=classification.screen.value,
+                    )
+                    return None
+            else:
+                return number, capture
+        return None
 
     def _log_start_level(self, point: PixelPoint, region: PixelRect | None = None) -> None:
         self.logger.info(
@@ -416,8 +458,10 @@ class ApplicationRuntime:
         )
         if result.screen is ScreenType.UNKNOWN:
             self._unknown_screenshot_number += 1
-            destination = self.settings.debug_directory / "unknown" / (
-                f"unknown-{self._unknown_screenshot_number:04d}.png"
+            destination = (
+                self.settings.debug_directory
+                / "unknown"
+                / (f"unknown-{self._unknown_screenshot_number:04d}.png")
             )
             save_screenshot(capture.data, destination)
             self.logger.info(
@@ -505,7 +549,15 @@ def build_runtime(
         screen_classifier=classifier,
         wheel_detector=wheel_detector or LetterWheelDetector(),
         letter_recognizer=letter_recognizer or WheelLetterRecognizer(),
-        level_number_recognizer=level_number_recognizer or LevelNumberRecognizer(),
+        level_number_recognizer=level_number_recognizer
+        or LevelNumberRecognizer(
+            supported_levels=(
+                frozenset(level.number for level in levels.all_levels())
+                if isinstance(levels, JsonLevelRepository)
+                else None
+            ),
+            debug_directory=settings.debug_directory,
+        ),
         solution_planner=LevelSolutionPlanner(levels, planner),
         level_executor=LevelExecutor(
             android,
