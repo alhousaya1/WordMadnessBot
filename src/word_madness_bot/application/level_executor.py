@@ -18,6 +18,7 @@ from word_madness_bot.application.word_execution import (
     SingleWordExecutor,
     WordExecutionResult,
 )
+from word_madness_bot.config.logging import StructuredLogger
 from word_madness_bot.domain.errors import (
     RuntimeTransitionError,
     WordExecutionError,
@@ -55,6 +56,7 @@ class LevelExecutor:
         screen_classifier: LevelScreenClassifier,
         popup_close_detector: PopupCloseButtonPort | None = None,
         completion_overlay_detector: CompletionOverlayPort | None = None,
+        logger: StructuredLogger | None = None,
         *,
         completion_animation_wait_seconds: float = 1.0,
         recovery_poll_seconds: float = 0.5,
@@ -73,6 +75,7 @@ class LevelExecutor:
         self.screen_classifier = screen_classifier
         self.popup_close_detector = popup_close_detector
         self.completion_overlay_detector = completion_overlay_detector
+        self.logger = logger
         self.completion_animation_wait_seconds = completion_animation_wait_seconds
         self.recovery_poll_seconds = recovery_poll_seconds
         self.recovery_timeout_seconds = recovery_timeout_seconds
@@ -91,7 +94,8 @@ class LevelExecutor:
 
         results: list[WordExecutionResult] = []
         current = before
-        for solution in plan.solutions:
+        previous: WordExecutionResult | None = None
+        for index, solution in enumerate(plan.solutions):
             single_word_plan = LevelSolutionPlan(
                 plan.level,
                 plan.recognized_letters,
@@ -101,11 +105,25 @@ class LevelExecutor:
                 single_word_plan,
                 current,
                 debug_directory,
+                verify=index == len(plan.solutions) - 1,
             )
+            if previous is not None and self.logger is not None:
+                self.logger.info(
+                    "runtime.word.inter_word_gap",
+                    previous_word=previous.word,
+                    next_word=result.word,
+                    previous_swipe_finished_timestamp=previous.swipe_finished_timestamp,
+                    next_swipe_started_timestamp=result.swipe_started_timestamp,
+                    inter_word_gap_ms=round(
+                        (result.swipe_started_timestamp - previous.swipe_finished_timestamp) * 1000,
+                        3,
+                    ),
+                )
             if not result.acceptance.accepted:
                 raise WordNotAcceptedError(result.word, result.acceptance.changed_pixel_ratio)
             results.append(result)
             current = result.after_capture
+            previous = result
 
         self.sleeper(self.completion_animation_wait_seconds)
         recovery_started = self.clock()

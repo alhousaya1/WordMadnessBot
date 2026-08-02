@@ -12,7 +12,7 @@ from word_madness_bot.application.word_execution import (
     ImageDifferenceWordAcceptanceVerifier,
     SingleWordExecutor,
 )
-from word_madness_bot.domain.errors import WordExecutionError
+from word_madness_bot.domain.errors import AdbCommandError, WordExecutionError
 from word_madness_bot.domain.geometry import PixelPoint, ScreenSize
 from word_madness_bot.domain.models import (
     ScreenCapture,
@@ -79,19 +79,16 @@ def test_verifier_accepts_answer_board_change_and_rejects_identical_state() -> N
 
 def test_executor_attempts_only_first_word_and_saves_all_evidence(tmp_path: Path) -> None:
     android = Android(_capture(changed=True))
-    sleeps: list[float] = []
     executor = SingleWordExecutor(
         android,  # type: ignore[arg-type]
         ImageDifferenceWordAcceptanceVerifier(),
-        sleeper=sleeps.append,
-        clock=iter((1.0, 2.0)).__next__,
+        clock=iter((1.0, 1.0, 1.25, 2.0)).__next__,
     )
     result = executor.execute(_plan(), _capture(), tmp_path)
     assert result.word == "AB"
     assert result.acceptance.accepted is True
     assert android.swipes == [SwipePath((PixelPoint(100, 600), PixelPoint(200, 650)), 250)]
     assert android.captures == 1
-    assert sleeps == [1.2]
     assert (tmp_path / "word_before.png").exists()
     assert (tmp_path / "word_after.png").exists()
     assert (tmp_path / "word_confirmed.png").exists()
@@ -106,12 +103,10 @@ def test_executor_attempts_only_first_word_and_saves_all_evidence(tmp_path: Path
 def test_executor_retries_once_after_rejection(tmp_path: Path) -> None:
     before = _capture()
     android = Android((before, _capture(changed=True)))
-    sleeps: list[float] = []
     executor = SingleWordExecutor(
         android,  # type: ignore[arg-type]
         ImageDifferenceWordAcceptanceVerifier(),
-        sleeper=sleeps.append,
-        clock=iter((1.0, 2.0, 3.0)).__next__,
+        clock=iter((1.0, 1.0, 1.25, 2.0, 2.0, 2.25, 3.0)).__next__,
     )
 
     result = executor.execute(_plan(), before, tmp_path)
@@ -123,7 +118,40 @@ def test_executor_retries_once_after_rejection(tmp_path: Path) -> None:
     assert result.acceptance.accepted is True
     assert android.swipes == [expected_path, expected_path]
     assert android.captures == 2
-    assert sleeps == [1.2, 1.2]
+
+
+def test_normal_submission_has_no_sleep_or_screenshot(tmp_path: Path) -> None:
+    android = Android(_capture(changed=True))
+    executor = SingleWordExecutor(
+        android,  # type: ignore[arg-type]
+        ImageDifferenceWordAcceptanceVerifier(),
+        clock=iter((1.0, 1.0, 1.25, 1.25)).__next__,
+    )
+
+    result = executor.execute(_plan(), _capture(), tmp_path, verify=False)
+
+    assert result.acceptance.accepted is True
+    assert android.captures == 0
+    assert not (tmp_path / "word_after.png").exists()
+
+
+def test_swipe_failure_captures_recovery_screenshot(tmp_path: Path) -> None:
+    class FailingAndroid(Android):
+        def swipe(self, path: SwipePath) -> SwipeExecutionReceipt:
+            raise AdbCommandError(("uiautomator2", "swipe_points"), 1, "failed")
+
+    android = FailingAndroid(_capture())
+    executor = SingleWordExecutor(
+        android,  # type: ignore[arg-type]
+        ImageDifferenceWordAcceptanceVerifier(),
+        clock=iter((1.0, 1.0)).__next__,
+    )
+
+    with pytest.raises(AdbCommandError):
+        executor.execute(_plan(), _capture(), tmp_path, verify=False)
+
+    assert android.captures == 1
+    assert (tmp_path / "word_swipe_failed.png").exists()
 
 
 def test_verifier_rejects_mismatched_screen_sizes() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from word_madness_bot.application.level_executor import LevelExecutor
 from word_madness_bot.application.solution_planning import LevelSolutionPlan, PlannedSolution
 from word_madness_bot.application.word_execution import AcceptanceResult, WordExecutionResult
+from word_madness_bot.config.logging import configure_logging
 from word_madness_bot.domain.errors import RuntimeTransitionError, WordExecutionError
 from word_madness_bot.domain.geometry import PixelPoint, PixelRect, ScreenSize
 from word_madness_bot.domain.models import ScreenCapture
@@ -48,14 +50,21 @@ class WordExecutor:
         self.words: list[str] = []
         self.durations: list[int] = []
         self.coordinates: list[tuple[PixelPoint, ...]] = []
+        self.verifications: list[bool] = []
 
     def execute(
-        self, plan: LevelSolutionPlan, before: ScreenCapture, debug_directory: Path
+        self,
+        plan: LevelSolutionPlan,
+        before: ScreenCapture,
+        debug_directory: Path,
+        *,
+        verify: bool = True,
     ) -> WordExecutionResult:
         solution = plan.solutions[0]
         self.words.append(solution.word)
         self.durations.append(solution.duration_ms)
         self.coordinates.append(solution.coordinates)
+        self.verifications.append(verify)
         accepted = next(self.accepted)
         return WordExecutionResult(
             solution.word,
@@ -66,6 +75,8 @@ class WordExecutor:
             (0, solution.duration_ms),
             ("fake",),
             CAPTURE,
+            float(len(self.words) - 1),
+            float(len(self.words)),
         )
 
 
@@ -92,6 +103,7 @@ def test_executes_every_word_then_waits_until_home(tmp_path: Path) -> None:
 
     assert words.words == ["AB", "CAB"]
     assert words.durations == [250, 360]
+    assert words.verifications == [False, True]
     assert words.coordinates == [
         (PixelPoint(1, 2), PixelPoint(3, 4)),
         (PixelPoint(5, 6),),
@@ -100,6 +112,25 @@ def test_executes_every_word_then_waits_until_home(tmp_path: Path) -> None:
     assert result.home_capture is CAPTURE
     assert android.captures == 2
     assert sleeps == [1.0, 0.5, 0.5]
+
+
+def test_next_swipe_starts_when_previous_backend_returns(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    words = WordExecutor((True, True))
+    LevelExecutor(
+        Android(),  # type: ignore[arg-type]
+        words,  # type: ignore[arg-type]
+        Classifier(ScreenType.HOME_SCREEN),
+        logger=configure_logging(name="test.inter.word.gap", stream=stream),
+        sleeper=lambda _: None,
+    ).execute(_plan(), CAPTURE, tmp_path)
+
+    output = stream.getvalue()
+    assert '"previous_word": "AB"' in output
+    assert '"next_word": "CAB"' in output
+    assert '"previous_swipe_finished_timestamp": 1.0' in output
+    assert '"next_swipe_started_timestamp": 1.0' in output
+    assert '"inter_word_gap_ms": 0.0' in output
 
 
 def test_preserves_per_word_planned_duration(tmp_path: Path) -> None:

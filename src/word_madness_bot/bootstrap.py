@@ -561,8 +561,6 @@ def build_runtime(
     single_word_executor = SingleWordExecutor(
         android,
         word_acceptance_verifier or ImageDifferenceWordAcceptanceVerifier(),
-        acceptance_wait_seconds=settings.inter_word_safety_delay_seconds,
-        sleeper=sleeper,
         clock=clock,
     )
     return ApplicationRuntime(
@@ -594,6 +592,7 @@ def build_runtime(
             classifier,
             popup_close_button_detector or UpperRightPopupCloseDetector(),
             completion_overlay_detector or CompletionOverlayDetector(),
+            logger=runtime_logger,
             clock=clock,
             sleeper=sleeper,
         ),

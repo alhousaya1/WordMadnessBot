@@ -15,7 +15,7 @@ from PIL import Image
 
 from word_madness_bot.application.ports.android import AndroidPort
 from word_madness_bot.application.solution_planning import LevelSolutionPlan
-from word_madness_bot.domain.errors import WordExecutionError
+from word_madness_bot.domain.errors import WordExecutionError, WordMadnessError
 from word_madness_bot.domain.geometry import PixelPoint
 from word_madness_bot.domain.models import ScreenCapture, SwipePath
 from word_madness_bot.infrastructure.adb.screenshot import save_screenshot
@@ -23,7 +23,6 @@ from word_madness_bot.infrastructure.adb.screenshot import save_screenshot
 cv2: Any = import_module("cv2")
 np: Any = import_module("numpy")
 Clock = Callable[[], float]
-Sleeper = Callable[[float], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +99,8 @@ class WordExecutionResult:
     timestamps_ms: tuple[int, ...]
     backend_command: tuple[str, ...]
     after_capture: ScreenCapture
+    swipe_started_timestamp: float = 0.0
+    swipe_finished_timestamp: float = 0.0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -114,6 +115,8 @@ class WordExecutionResult:
             "elapsed_seconds": self.elapsed_seconds,
             "timestamps_ms": list(self.timestamps_ms),
             "backend_command": list(self.backend_command),
+            "swipe_started_timestamp": self.swipe_started_timestamp,
+            "swipe_finished_timestamp": self.swipe_finished_timestamp,
         }
 
 
@@ -125,16 +128,10 @@ class SingleWordExecutor:
         android: AndroidPort,
         verifier: WordAcceptanceVerifier,
         *,
-        acceptance_wait_seconds: float = 1.2,
-        sleeper: Sleeper = time.sleep,
         clock: Clock = time.monotonic,
     ) -> None:
-        if acceptance_wait_seconds < 0:
-            raise ValueError("acceptance_wait_seconds cannot be negative")
         self.android = android
         self.verifier = verifier
-        self.acceptance_wait_seconds = acceptance_wait_seconds
-        self.sleeper = sleeper
         self.clock = clock
 
     def execute(
@@ -142,6 +139,8 @@ class SingleWordExecutor:
         plan: LevelSolutionPlan,
         before: ScreenCapture,
         debug_directory: Path,
+        *,
+        verify: bool = True,
     ) -> WordExecutionResult:
         """Attempt the first solution and never inspect or execute later solutions."""
         if not plan.solutions:
@@ -153,15 +152,28 @@ class SingleWordExecutor:
         confirmation_path = debug_directory / "word_confirmed.png"
         swipe_path = debug_directory / "swipe.json"
         try:
-            save_screenshot(before.data, before_path)
             result: WordExecutionResult | None = None
-            for _ in range(2):
-                receipt = self.android.swipe(SwipePath(first.coordinates, first.duration_ms))
-                self.sleeper(self.acceptance_wait_seconds)
-                after = self.android.capture_screenshot()
-                save_screenshot(after.data, after_path)
-                save_screenshot(after.data, confirmation_path)
-                acceptance = self.verifier.verify(before, after, after)
+            for _ in range(2 if verify else 1):
+                swipe_started = self.clock()
+                try:
+                    receipt = self.android.swipe(SwipePath(first.coordinates, first.duration_ms))
+                except WordMadnessError:
+                    try:
+                        failure = self.android.capture_screenshot()
+                        save_screenshot(failure.data, debug_directory / "word_swipe_failed.png")
+                    except (WordMadnessError, OSError):
+                        pass
+                    raise
+                swipe_finished = self.clock()
+                if verify:
+                    save_screenshot(before.data, before_path)
+                    after = self.android.capture_screenshot()
+                    save_screenshot(after.data, after_path)
+                    save_screenshot(after.data, confirmation_path)
+                    acceptance = self.verifier.verify(before, after, after)
+                else:
+                    after = before
+                    acceptance = AcceptanceResult(True, 0.0, 0.0)
                 result = WordExecutionResult(
                     first.word,
                     first.duration_ms,
@@ -171,15 +183,18 @@ class SingleWordExecutor:
                     receipt.timestamps_ms,
                     receipt.backend_command,
                     after,
+                    swipe_started,
+                    swipe_finished,
                 )
                 if acceptance.accepted:
                     break
             if result is None:
                 raise WordExecutionError("Single-word execution produced no result")
-            swipe_path.write_text(
-                json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
+            if verify:
+                swipe_path.write_text(
+                    json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
         except WordExecutionError:
             raise
         except OSError as error:

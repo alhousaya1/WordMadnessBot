@@ -247,7 +247,7 @@ def test_start_captures_classifies_and_logs_level_entry(tmp_path: Path) -> None:
     )
     runtime.start(max_levels=1)
     assert (tmp_path / "screenshot-1.png").read_bytes() == PNG
-    assert (android.selected, android.verified, android.captures) == (1, 1, 5)
+    assert (android.selected, android.verified, android.captures) == (1, 1, 4)
     output = stream.getvalue()
     assert '"detected_screen": "level_screen"' in output
     assert '"template_confidence": 0.97' in output
@@ -303,8 +303,8 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     )
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps == [4.0, 0.05, 0.05, 1.0, 0.5]
-    assert android.captures == 5
+    assert sleeps == [4.0, 1.0, 0.5]
+    assert android.captures == 4
     assert classifier.calls == 3
     output = stream.getvalue()
     detected_index = output.index('"event": "runtime.start_level.detected"')
@@ -367,8 +367,8 @@ def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(100, 40), PixelPoint(540, 1569)]
-    assert sleeps == [0.5, 4.0, 0.05, 0.05, 1.0, 0.5]
-    assert android.captures == 6
+    assert sleeps == [0.5, 4.0, 1.0, 0.5]
+    assert android.captures == 5
     assert classifier.calls == 4
 
 
@@ -489,7 +489,7 @@ def test_rejected_first_word_logs_and_stops(tmp_path: Path) -> None:
     )
     with pytest.raises(WordNotAcceptedError, match="AB"):
         runtime.start(max_levels=1)
-    assert len(android.swipes) == 2
+    assert len(android.swipes) == 3
     assert (tmp_path / "swipe.json").exists()
     assert '"event": "runtime.word.not_accepted"' in stream.getvalue()
 

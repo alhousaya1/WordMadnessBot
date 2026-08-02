@@ -21,7 +21,7 @@ class Settings:
     adb_timeout_seconds: float = 15.0
     adb_retries: int = 2
     swipe_segment_duration_seconds: float = 0.150
-    inter_word_safety_delay_seconds: float = 0.050
+    inter_word_safety_delay_seconds: float = 0.0
     log_level: str = "INFO"
     data_directory: Path = Path("data")
     log_directory: Path = Path("logs")
@@ -66,7 +66,7 @@ class Settings:
                 "SWIPE_SEGMENT_DURATION_SECONDS",
             ),
             inter_word_safety_delay_seconds=_bounded_delay(
-                values.get(f"{cls.ENV_PREFIX}INTER_WORD_SAFETY_DELAY_SECONDS", "0.050"),
+                values.get(f"{cls.ENV_PREFIX}INTER_WORD_SAFETY_DELAY_SECONDS", "0"),
                 "INTER_WORD_SAFETY_DELAY_SECONDS",
             ),
             log_level=values.get(f"{cls.ENV_PREFIX}LOG_LEVEL", "INFO"),
