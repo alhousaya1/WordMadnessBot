@@ -11,6 +11,7 @@ from word_madness_bot import __version__
 from word_madness_bot.bootstrap import build_runtime
 from word_madness_bot.config.settings import Settings
 from word_madness_bot.domain.errors import ConfigurationError, WordMadnessError
+from word_madness_bot.runtime_lock import SingleInstanceGuard
 
 
 class Runtime(Protocol):
@@ -43,8 +44,9 @@ def main(
     runtime: Runtime | None = None
     try:
         settings = Settings.from_environment(environ)
-        runtime = runtime_builder(settings)
-        runtime.start(dry_run=arguments.dry_run)
+        with SingleInstanceGuard():
+            runtime = runtime_builder(settings)
+            runtime.start(dry_run=arguments.dry_run)
         return 0
     except ConfigurationError as error:
         print(f"configuration error: {error}", file=error_stream)

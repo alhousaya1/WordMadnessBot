@@ -77,7 +77,7 @@ LevelFactory = Callable[[], LevelRepository]
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
 COMPLETION_HOME_TRANSITION_TIMEOUT_SECONDS = 23.0
-LEVEL_ENTRY_STABILIZATION_SECONDS = 10.0
+LEVEL_ENTRY_STABILIZATION_SECONDS = 4.0
 LEVEL_WHEEL_READY_RETRY_LIMIT = 20
 
 
@@ -304,7 +304,6 @@ class ApplicationRuntime:
             recognition,
             level_number=level_number,
         )
-        self.sleeper(10.0)
         return self._execute_level(capture, plan)
 
     def _enter_level(
@@ -452,8 +451,12 @@ class ApplicationRuntime:
             coordinates = [{"x": point.x, "y": point.y} for point in word.coordinates]
             self.logger.info(
                 "runtime.word.executed",
-                executed_word=word.word,
-                swipe_duration_ms=word.duration_ms,
+                word=word.word,
+                number_of_letters=len(word.coordinates),
+                number_of_segments=len(word.coordinates) - 1,
+                segment_duration_ms=word.duration_ms // (len(word.coordinates) - 1),
+                total_requested_duration_ms=word.duration_ms,
+                actual_elapsed_duration_ms=round(word.elapsed_seconds * 1000),
                 swipe_coordinates=coordinates,
                 acceptance_verification=word.acceptance.accepted,
                 changed_pixel_ratio=word.acceptance.changed_pixel_ratio,
@@ -550,12 +553,15 @@ def build_runtime(
     runtime_logger = logger or configure_logging(level=settings.log_level)
     android = android_factory(settings, runtime_logger)
     levels = level_factory()
-    planner = SwipePathPlanner()
+    planner = SwipePathPlanner(
+        segment_duration_ms=round(settings.swipe_segment_duration_seconds * 1000)
+    )
     decisions = DecisionEngine()
     classifier = screen_classifier or ScreenClassifier()
     single_word_executor = SingleWordExecutor(
         android,
         word_acceptance_verifier or ImageDifferenceWordAcceptanceVerifier(),
+        acceptance_wait_seconds=settings.inter_word_safety_delay_seconds,
         sleeper=sleeper,
         clock=clock,
     )
@@ -588,7 +594,6 @@ def build_runtime(
             classifier,
             popup_close_button_detector or UpperRightPopupCloseDetector(),
             completion_overlay_detector or CompletionOverlayDetector(),
-            swipe_duration_ms=settings.swipe_duration_ms,
             clock=clock,
             sleeper=sleeper,
         ),

@@ -44,9 +44,7 @@ def test_visible_wheel_overrides_failed_level_template() -> None:
     screenshot = Path(__file__).parents[2] / "fixtures" / "images" / "level_screen.png"
     capture = ScreenCapture(screenshot.read_bytes(), ScreenSize(1440, 3120))
     classifier = ScreenClassifier()
-    classifier._templates[ScreenType.LEVEL_SCREEN] = classifier._templates[
-        ScreenType.HOME_SCREEN
-    ]
+    classifier._templates[ScreenType.LEVEL_SCREEN] = classifier._templates[ScreenType.HOME_SCREEN]
 
     result = classifier.classify(capture)
 

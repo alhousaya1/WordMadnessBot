@@ -13,9 +13,7 @@ from word_madness_bot.infrastructure.adb.screenshot import parse_png_size
 @pytest.mark.hardware
 @pytest.mark.skipif(os.environ.get("WMB_RUN_ADB_SMOKE") != "1", reason="hardware test is opt-in")
 def test_runtime_captures_real_device_screenshot(tmp_path: Path) -> None:
-    settings = Settings.from_environment(
-        {**os.environ, "WMB_DEBUG_DIRECTORY": str(tmp_path)}
-    )
+    settings = Settings.from_environment({**os.environ, "WMB_DEBUG_DIRECTORY": str(tmp_path)})
     runtime = build_runtime(settings)
     runtime.start()
     runtime.shutdown()

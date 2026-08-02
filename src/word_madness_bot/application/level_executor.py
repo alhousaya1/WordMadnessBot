@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -58,8 +58,7 @@ class LevelExecutor:
         *,
         completion_animation_wait_seconds: float = 1.0,
         recovery_poll_seconds: float = 0.5,
-        recovery_timeout_seconds: float = 20.0,
-        swipe_duration_ms: int = 500,
+        recovery_timeout_seconds: float | None = None,
         clock: Clock = time.monotonic,
         sleeper: Sleeper = time.sleep,
     ) -> None:
@@ -67,10 +66,8 @@ class LevelExecutor:
             raise ValueError("completion_animation_wait_seconds cannot be negative")
         if recovery_poll_seconds <= 0:
             raise ValueError("recovery_poll_seconds must be positive")
-        if recovery_timeout_seconds <= 0:
+        if recovery_timeout_seconds is not None and recovery_timeout_seconds <= 0:
             raise ValueError("recovery_timeout_seconds must be positive")
-        if swipe_duration_ms <= 0:
-            raise ValueError("swipe_duration_ms must be positive")
         self.android = android
         self.word_executor = word_executor
         self.screen_classifier = screen_classifier
@@ -79,7 +76,6 @@ class LevelExecutor:
         self.completion_animation_wait_seconds = completion_animation_wait_seconds
         self.recovery_poll_seconds = recovery_poll_seconds
         self.recovery_timeout_seconds = recovery_timeout_seconds
-        self.swipe_duration_ms = swipe_duration_ms
         self.clock = clock
         self.sleeper = sleeper
 
@@ -99,7 +95,7 @@ class LevelExecutor:
             single_word_plan = LevelSolutionPlan(
                 plan.level,
                 plan.recognized_letters,
-                (replace(solution, duration_ms=self.swipe_duration_ms),),
+                (solution,),
             )
             result = self.word_executor.execute(
                 single_word_plan,
@@ -114,7 +110,10 @@ class LevelExecutor:
         self.sleeper(self.completion_animation_wait_seconds)
         recovery_started = self.clock()
         while True:
-            if self.clock() - recovery_started >= self.recovery_timeout_seconds:
+            if (
+                self.recovery_timeout_seconds is not None
+                and self.clock() - recovery_started >= self.recovery_timeout_seconds
+            ):
                 raise RuntimeTransitionError(
                     "Level completion did not reach the Home Screen within "
                     f"{self.recovery_timeout_seconds:g} seconds"

@@ -51,6 +51,7 @@ class Android:
     def __getattr__(self, name: str) -> Any:
         return lambda *args, **kwargs: None
 
+
 class CompletionOverlayDetector:
     def tap_to_continue_visible(self, capture: ScreenCapture) -> bool:
         return False
@@ -64,11 +65,13 @@ class CompletionOverlayDetector:
     def settings_visible(self, capture: ScreenCapture) -> bool:
         return False
 
+
 class AcceptanceVerifier:
     def verify(
         self, before: ScreenCapture, after: ScreenCapture, confirmation: ScreenCapture
     ) -> AcceptanceResult:
         return AcceptanceResult(True, 0.01, 1.0)
+
 
 def _capture(*templates: tuple[str, int, int]) -> ScreenCapture:
     image = Image.new("L", (1400, 1000), 24)
@@ -135,7 +138,7 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     runtime.shutdown()
     assert android.taps == [PixelPoint(1290, 845), PixelPoint(720, 2040)]
     assert len(android.swipes) == 8
-    assert {path.duration_ms for path in android.swipes} == {500}
+    assert {path.duration_ms for path in android.swipes} == {300, 450, 600}
     assert (tmp_path / "screenshot-1.png").exists()
     assert (tmp_path / "screenshot-2.png").exists()
     assert (tmp_path / "letter-wheel-annotated.png").exists()
@@ -154,13 +157,20 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     assert solution["level"] == 90
     assert solution["recognized_letters"] == list("OUNFD")
     assert [item["word"] for item in solution["solutions"]] == [
-        "DON", "DUN", "DUO", "FUN", "NOD", "FOND", "FUND", "FOUND"
+        "DON",
+        "DUN",
+        "DUO",
+        "FUN",
+        "NOD",
+        "FOND",
+        "FUND",
+        "FOUND",
     ]
     swipe = json.loads((tmp_path / "swipe.json").read_text(encoding="utf-8"))
     assert swipe["word"] == "FOUND"
     assert swipe["accepted"] is True
-    assert swipe["duration_ms"] == 500
-    assert swipe["timestamps_ms"] == [0, 500]
+    assert swipe["duration_ms"] == 600
+    assert swipe["timestamps_ms"] == [0, 600]
     assert (tmp_path / "word_before.png").exists()
     assert (tmp_path / "word_after.png").exists()
     assert (tmp_path / "word_confirmed.png").exists()

@@ -68,8 +68,10 @@ def test_bounded_polling_returns_action() -> None:
 
 def test_polling_timeout_and_cancellation_are_typed() -> None:
     workflow, _ = loop()
+
     def observe() -> StateObservation:
         return StateObservation(GameState.UNKNOWN, 0, stable=True)
+
     with pytest.raises(WorkflowTimeoutError):
         workflow.await_action(observe, max_polls=2)
     with pytest.raises(WorkflowCancelledError):

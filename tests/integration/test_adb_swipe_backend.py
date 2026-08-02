@@ -54,18 +54,18 @@ def test_production_adapter_selects_uiautomator2_swipe_points_backend(
     adapter.swipe(
         SwipePath(
             (PixelPoint(100, 200), PixelPoint(300, 400), PixelPoint(500, 600)),
-            180,
+            300,
         )
     )
 
     assert device.points == [(100, 200), (300, 400), (500, 600)]
-    assert device.duration == 0.09
+    assert device.duration == 0.15
     events = [json.loads(line) for line in log_stream.getvalue().splitlines()]
     selection = next(event for event in events if event["event"] == "adb.swipe.backend_selected")
     assert selection["context"] == {
         "backend": "uiautomator2_swipe_points",
         "backend_command": ["uiautomator2", "swipe_points", "samsung"],
-        "requested_duration_seconds": 0.18,
-        "segment_duration_seconds": 0.09,
+        "requested_duration_seconds": 0.3,
+        "segment_duration_seconds": 0.15,
         "point_count": 3,
     }

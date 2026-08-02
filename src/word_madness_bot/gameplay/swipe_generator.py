@@ -17,22 +17,14 @@ class SwipePathPlanner:
     def __init__(
         self,
         *,
-        duration_per_letter_ms: int | None = None,
-        minimum_duration_ms: int | None = None,
+        segment_duration_ms: int = 150,
         maximum_step: float = 0.08,
     ) -> None:
-        if (duration_per_letter_ms is None) != (minimum_duration_ms is None):
-            raise ValueError("Custom swipe timing requires both duration values")
-        if (
-            duration_per_letter_ms is not None
-            and minimum_duration_ms is not None
-            and (duration_per_letter_ms <= 0 or minimum_duration_ms <= 0)
-        ):
-            raise ValueError("Swipe durations must be positive")
+        if segment_duration_ms <= 0:
+            raise ValueError("segment_duration_ms must be positive")
         if not 0 < maximum_step <= 1:
             raise ValueError("maximum_step must be between zero and one")
-        self.duration_per_letter_ms = duration_per_letter_ms
-        self.minimum_duration_ms = minimum_duration_ms
+        self.segment_duration_ms = segment_duration_ms
         self.maximum_step = maximum_step
 
     def plan_normalized(
@@ -48,11 +40,7 @@ class SwipePathPlanner:
             raise SwipePlanningError("A swipe word requires at least two letters")
         indices = _map_letters(letters, normalized_word)
         control_points = tuple(letters[index].position for index in indices)
-        points = (
-            _interpolate(control_points, self.maximum_step)
-            if interpolate
-            else control_points
-        )
+        points = _interpolate(control_points, self.maximum_step) if interpolate else control_points
         duration = self._duration(len(normalized_word))
         return NormalizedSwipePath(points, duration, normalized_word)
 
@@ -72,15 +60,7 @@ class SwipePathPlanner:
         )
 
     def _duration(self, length: int) -> int:
-        if self.duration_per_letter_ms is not None and self.minimum_duration_ms is not None:
-            return max(self.minimum_duration_ms, length * self.duration_per_letter_ms)
-        if length <= 2:
-            return 120
-        if length == 3:
-            return 150
-        if length == 4:
-            return 180
-        return 220 + (length - 5) * 40
+        return (length - 1) * self.segment_duration_ms
 
 
 def _map_letters(letters: tuple[LetterPosition, ...], word: str) -> tuple[int, ...]:

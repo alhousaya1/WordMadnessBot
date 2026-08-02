@@ -49,16 +49,13 @@ def test_packaged_levels_and_templates_are_present() -> None:
     assert len(packaged_levels) == 1010
     assert packaged_levels[0].number == 1
     assert packaged_levels[89].number == 90
-    assert packaged_levels[89].words == (
-        "DON", "DUN", "DUO", "FUN", "NOD", "FOND", "FUND", "FOUND"
-    )
+    assert packaged_levels[89].words == ("DON", "DUN", "DUO", "FUN", "NOD", "FOND", "FUND", "FOUND")
     assert packaged_levels[-1].number == 1010
+
 
 def test_fake_backed_level_and_ad_workflow() -> None:
     android = FakeAndroid()
-    repository = JsonLevelRepository.from_json(
-        '{"levels": [{"number": 1, "words": ["CAT"]}]}'
-    )
+    repository = JsonLevelRepository.from_json('{"levels": [{"number": 1, "words": ["CAT"]}]}')
     letters = tuple(
         LetterPosition(character, point)
         for character, point in zip(
@@ -94,6 +91,7 @@ def test_fake_backed_level_and_ad_workflow() -> None:
     assert len(android.swipes) == 1
     assert ad_result.dismissed
     assert len(android.taps) == 1
+
 
 def test_repository_contains_no_prototype_runtime_or_imports() -> None:
     root = Path(__file__).parents[2]

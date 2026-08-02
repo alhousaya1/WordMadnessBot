@@ -91,7 +91,7 @@ def test_executes_every_word_then_waits_until_home(tmp_path: Path) -> None:
     result = executor.execute(_plan(), CAPTURE, tmp_path)
 
     assert words.words == ["AB", "CAB"]
-    assert words.durations == [500, 500]
+    assert words.durations == [250, 360]
     assert words.coordinates == [
         (PixelPoint(1, 2), PixelPoint(3, 4)),
         (PixelPoint(5, 6),),
@@ -102,20 +102,16 @@ def test_executes_every_word_then_waits_until_home(tmp_path: Path) -> None:
     assert sleeps == [1.0, 0.5, 0.5]
 
 
-def test_runtime_swipe_duration_is_configurable(tmp_path: Path) -> None:
-    android = Android()
+def test_preserves_per_word_planned_duration(tmp_path: Path) -> None:
     words = WordExecutor((True, True))
-    executor = LevelExecutor(
-        android,  # type: ignore[arg-type]
+    LevelExecutor(
+        Android(),  # type: ignore[arg-type]
         words,  # type: ignore[arg-type]
         Classifier(ScreenType.HOME_SCREEN),
-        swipe_duration_ms=750,
         sleeper=lambda _: None,
-    )
+    ).execute(_plan(), CAPTURE, tmp_path)
 
-    executor.execute(_plan(), CAPTURE, tmp_path)
-
-    assert words.durations == [750, 750]
+    assert words.durations == [250, 360]
 
 
 def test_stops_immediately_when_a_word_is_rejected(tmp_path: Path) -> None:
@@ -132,7 +128,7 @@ def test_stops_immediately_when_a_word_is_rejected(tmp_path: Path) -> None:
         executor.execute(_plan(), CAPTURE, tmp_path)
 
     assert words.words == ["AB", "CAB"]
-    assert words.durations == [500, 500]
+    assert words.durations == [250, 360]
     assert words.coordinates == [
         (PixelPoint(1, 2), PixelPoint(3, 4)),
         (PixelPoint(5, 6),),

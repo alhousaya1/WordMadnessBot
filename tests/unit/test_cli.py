@@ -68,6 +68,7 @@ def test_cli_gracefully_handles_keyboard_interrupt() -> None:
     assert result == 130
     assert runtime.shutdowns == 1
 
+
 class FailingRuntime(FakeRuntime):
     def start(self, *, dry_run: bool = False) -> None:
         raise ScreenshotError("capture failed")

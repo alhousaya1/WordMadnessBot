@@ -88,9 +88,10 @@ class SwipeExecutionReceipt:
             raise DomainValidationError("Swipe execution requires at least two timestamps")
         if self.timestamps_ms[0] != 0:
             raise DomainValidationError("Swipe timestamps must begin at zero")
-        if any(current <= previous for previous, current in zip(
-            self.timestamps_ms, self.timestamps_ms[1:], strict=False
-        )):
+        if any(
+            current <= previous
+            for previous, current in zip(self.timestamps_ms, self.timestamps_ms[1:], strict=False)
+        ):
             raise DomainValidationError("Swipe timestamps must increase")
 
 

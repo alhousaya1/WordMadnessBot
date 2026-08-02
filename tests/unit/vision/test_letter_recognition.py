@@ -65,9 +65,7 @@ def test_crops_normalizes_and_saves_indexed_results(tmp_path: Path) -> None:
         engine,
         clock=iter((1.0, 1.1, 2.0, 2.2, 3.0, 3.3)).__next__,
     )
-    output = recognizer.recognize(
-        _capture(image), geometry, tmp_path
-    )
+    output = recognizer.recognize(_capture(image), geometry, tmp_path)
     assert [item.character for item in output.letters] == list("ABC")
     assert [item.elapsed_seconds for item in output.letters] == pytest.approx([0.1, 0.2, 0.3])
     assert all(item.size == (64, 64) and item.mode == "L" for item in engine.images)

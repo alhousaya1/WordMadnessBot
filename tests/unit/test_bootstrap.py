@@ -303,7 +303,7 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     )
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps == [10.0, 10.0, 1.2, 1.2, 1.0, 0.5]
+    assert sleeps == [4.0, 0.05, 0.05, 1.0, 0.5]
     assert android.captures == 5
     assert classifier.calls == 3
     output = stream.getvalue()
@@ -343,8 +343,8 @@ def test_completion_home_start_waits_before_first_level_detection(tmp_path: Path
     runtime.start(max_levels=1)
 
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps[0] == 10.0
-    assert sleeps.count(10.0) == 2
+    assert sleeps[0] == 4.0
+    assert sleeps.count(4.0) == 1
 
 
 def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
@@ -367,7 +367,7 @@ def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(100, 40), PixelPoint(540, 1569)]
-    assert sleeps == [0.5, 10.0, 10.0, 1.2, 1.2, 1.0, 0.5]
+    assert sleeps == [0.5, 4.0, 0.05, 0.05, 1.0, 0.5]
     assert android.captures == 6
     assert classifier.calls == 4
 
@@ -386,7 +386,7 @@ def test_entry_waits_without_tapping_until_level_wheel_appears(tmp_path: Path) -
     _build(android, classifier, tmp_path, sleeper=sleeps.append).start(max_levels=1)
 
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps[:3] == [10.0, 1.0, 1.0]
+    assert sleeps[:3] == [4.0, 1.0, 1.0]
 
 
 def test_capture_failure_is_logged_and_raised(tmp_path: Path) -> None:
@@ -573,4 +573,4 @@ def test_post_start_tap_to_continue_false_positive_does_not_tap(tmp_path: Path) 
     runtime.start(max_levels=1)
 
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps[:2] == [10.0, 1.0]
+    assert sleeps[:2] == [4.0, 1.0]

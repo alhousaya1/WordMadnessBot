@@ -39,9 +39,7 @@ def _inputs(tmp_path: Path) -> tuple[WheelLetterRecognition, LetterWheelGeometry
 
 
 def test_plans_indices_and_interpolated_coordinates_for_every_word(tmp_path: Path) -> None:
-    repository = JsonLevelRepository.from_json(
-        '{"levels":[{"number":7,"words":["AB","BABA"]}]}'
-    )
+    repository = JsonLevelRepository.from_json('{"levels":[{"number":7,"words":["AB","BABA"]}]}')
     recognition, geometry = _inputs(tmp_path)
     plan = LevelSolutionPlanner(repository, SwipePathPlanner()).plan(
         7, recognition, geometry, ScreenSize(1000, 1000)
@@ -54,14 +52,12 @@ def test_plans_indices_and_interpolated_coordinates_for_every_word(tmp_path: Pat
     assert plan.solutions[0].coordinates[0] == PixelPoint(500, 200)
     assert plan.solutions[0].coordinates[-1] == PixelPoint(800, 500)
     assert len(plan.solutions[0].coordinates) == len(plan.solutions[0].word)
-    assert plan.solutions[0].duration_ms == 120
-    assert plan.solutions[1].duration_ms == 180
+    assert plan.solutions[0].duration_ms == 150
+    assert plan.solutions[1].duration_ms == 450
 
 
 def test_rejects_repository_word_that_cannot_be_formed(tmp_path: Path) -> None:
-    repository = JsonLevelRepository.from_json(
-        '{"levels":[{"number":7,"words":["AAA"]}]}'
-    )
+    repository = JsonLevelRepository.from_json('{"levels":[{"number":7,"words":["AAA"]}]}')
     recognition, geometry = _inputs(tmp_path)
     with pytest.raises(SolutionPlanningError, match="cannot be formed"):
         LevelSolutionPlanner(repository, SwipePathPlanner()).plan(
@@ -70,9 +66,7 @@ def test_rejects_repository_word_that_cannot_be_formed(tmp_path: Path) -> None:
 
 
 def test_saves_stable_json_debug_artifact(tmp_path: Path) -> None:
-    repository = JsonLevelRepository.from_json(
-        '{"levels":[{"number":7,"words":["AB"]}]}'
-    )
+    repository = JsonLevelRepository.from_json('{"levels":[{"number":7,"words":["AB"]}]}')
     recognition, geometry = _inputs(tmp_path)
     plan = LevelSolutionPlanner(repository, SwipePathPlanner()).plan(
         7, recognition, geometry, ScreenSize(1000, 1000)

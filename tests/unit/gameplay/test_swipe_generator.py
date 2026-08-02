@@ -41,8 +41,7 @@ def test_interpolation_limits_segment_length_and_preserves_endpoints() -> None:
     assert path.points[0] == NormalizedPoint(0.2, 0.5)
     assert path.points[-1] == NormalizedPoint(0.5, 0.8)
     assert all(
-        ((b.x - a.x) ** 2 + (b.y - a.y) ** 2) ** 0.5 <= 0.100001
-        for a, b in pairwise(path.points)
+        ((b.x - a.x) ** 2 + (b.y - a.y) ** 2) ** 0.5 <= 0.100001 for a, b in pairwise(path.points)
     )
 
 
@@ -55,12 +54,12 @@ def test_pixel_path_is_resolution_independent_and_bounded() -> None:
     assert large.points[0].x > small.points[0].x
 
 
-def test_duration_has_documented_minimum() -> None:
+def test_segment_duration_is_configurable() -> None:
     assert (
-        SwipePathPlanner(duration_per_letter_ms=10, minimum_duration_ms=300)
-        .plan_normalized(wheel(), "AB")
+        SwipePathPlanner(segment_duration_ms=200)
+        .plan_normalized(wheel(), "ABA", interpolate=False)
         .duration_ms
-        == 300
+        == 400
     )
 
 
@@ -68,6 +67,7 @@ def test_planner_has_no_adb_dependency() -> None:
     import word_madness_bot.gameplay.swipe_generator as module
 
     assert not any("adb" in name.lower() for name in module.__dict__)
+
 
 def test_exact_control_point_mode_does_not_interpolate() -> None:
     path = SwipePathPlanner().plan_normalized(wheel(), "ABA", interpolate=False)
@@ -80,16 +80,14 @@ def test_exact_control_point_mode_does_not_interpolate() -> None:
 
 @pytest.mark.parametrize(
     ("word", "expected_duration"),
-    [("ABC", 150), ("ABCD", 180), ("ABCDE", 220), ("ABCDEF", 260), ("ABCDEFG", 300)],
+    [("ABC", 300), ("ABCD", 450), ("ABCDE", 600), ("ABCDEF", 750), ("ABCDEFG", 900)],
 )
-def test_default_human_drag_duration_profile(word: str, expected_duration: int) -> None:
+def test_duration_is_150_ms_per_letter_transition(word: str, expected_duration: int) -> None:
     letters = tuple(
         LetterPosition(character, NormalizedPoint((index + 1) / 8, 0.5))
         for index, character in enumerate("ABCDEFG")
     )
     assert (
-        SwipePathPlanner()
-        .plan_normalized(letters, word, interpolate=False)
-        .duration_ms
+        SwipePathPlanner().plan_normalized(letters, word, interpolate=False).duration_ms
         == expected_duration
     )

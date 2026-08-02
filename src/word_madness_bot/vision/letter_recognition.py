@@ -76,9 +76,7 @@ class OpenCvTemplateOcrEngine:
         package = files("word_madness_bot.resources.glyphs")
         self._templates = {
             character: _normalize_mask(
-                Image.open(
-                    io.BytesIO(package.joinpath(f"{character}.png").read_bytes())
-                )
+                Image.open(io.BytesIO(package.joinpath(f"{character}.png").read_bytes()))
             )
             for character in string.ascii_uppercase
         }
@@ -87,9 +85,7 @@ class OpenCvTemplateOcrEngine:
         """Return the strongest normalized correlation across uppercase templates."""
         source = _normalize_mask(image)
         scores = {
-            character: float(
-                cv2.matchTemplate(source, template, cv2.TM_CCOEFF_NORMED)[0, 0]
-            )
+            character: float(cv2.matchTemplate(source, template, cv2.TM_CCOEFF_NORMED)[0, 0])
             for character, template in self._templates.items()
         }
         character, score = max(scores.items(), key=lambda item: (item[1], item[0]))

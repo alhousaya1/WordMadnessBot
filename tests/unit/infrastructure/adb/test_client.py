@@ -225,14 +225,14 @@ def test_swipe_delegates_complete_path_to_uiautomator2(tmp_path: Path) -> None:
     receipt = adapter.swipe(
         SwipePath(
             (PixelPoint(10, 20), PixelPoint(30, 40), PixelPoint(50, 60)),
-            180,
+            300,
         )
     )
 
     assert connected_serials == ["a"]
-    assert device.calls == [([(10, 20), (30, 40), (50, 60)], 0.09)]
+    assert device.calls == [([(10, 20), (30, 40), (50, 60)], 0.15)]
     assert receipt.backend_command == ("uiautomator2", "swipe_points", "a")
-    assert receipt.timestamps_ms == (0, 90, 180)
+    assert receipt.timestamps_ms == (0, 150, 300)
 
 
 def test_swipe_rejects_false_uiautomator2_result(tmp_path: Path) -> None:
