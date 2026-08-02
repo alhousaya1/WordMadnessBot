@@ -80,9 +80,9 @@ def test_exact_control_point_mode_does_not_interpolate() -> None:
 
 @pytest.mark.parametrize(
     ("word", "expected_duration"),
-    [("ABC", 300), ("ABCD", 450), ("ABCDE", 600), ("ABCDEF", 750), ("ABCDEFG", 900)],
+    [("ABC", 400), ("ABCD", 600), ("ABCDE", 800), ("ABCDEF", 1000), ("ABCDEFG", 1200)],
 )
-def test_duration_is_150_ms_per_letter_transition(word: str, expected_duration: int) -> None:
+def test_duration_is_200_ms_per_letter_transition(word: str, expected_duration: int) -> None:
     letters = tuple(
         LetterPosition(character, NormalizedPoint((index + 1) / 8, 0.5))
         for index, character in enumerate("ABCDEFG")

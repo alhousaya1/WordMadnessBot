@@ -20,7 +20,7 @@ class Settings:
     adb_executable: str = "adb"
     adb_timeout_seconds: float = 15.0
     adb_retries: int = 2
-    swipe_segment_duration_seconds: float = 0.150
+    swipe_segment_duration_seconds: float = 0.200
     inter_word_safety_delay_seconds: float = 0.0
     log_level: str = "INFO"
     data_directory: Path = Path("data")
@@ -62,7 +62,7 @@ class Settings:
                 "ADB_RETRIES",
             ),
             swipe_segment_duration_seconds=_positive_float(
-                values.get(f"{cls.ENV_PREFIX}SWIPE_SEGMENT_DURATION_SECONDS", "0.150"),
+                values.get(f"{cls.ENV_PREFIX}SWIPE_SEGMENT_DURATION_SECONDS", "0.200"),
                 "SWIPE_SEGMENT_DURATION_SECONDS",
             ),
             inter_word_safety_delay_seconds=_bounded_delay(

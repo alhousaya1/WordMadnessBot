@@ -17,7 +17,7 @@ class SwipePathPlanner:
     def __init__(
         self,
         *,
-        segment_duration_ms: int = 150,
+        segment_duration_ms: int = 200,
         maximum_step: float = 0.08,
     ) -> None:
         if segment_duration_ms <= 0:

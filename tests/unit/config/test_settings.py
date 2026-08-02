@@ -14,7 +14,7 @@ def test_settings_have_safe_defaults() -> None:
     assert settings.adb_executable == "adb"
     assert settings.adb_timeout_seconds == 15.0
     assert settings.adb_retries == 2
-    assert settings.swipe_segment_duration_seconds == 0.150
+    assert settings.swipe_segment_duration_seconds == 0.200
     assert settings.inter_word_safety_delay_seconds == 0.0
     assert settings.log_level == "INFO"
     assert settings.data_directory == Path("data")

@@ -138,7 +138,7 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     runtime.shutdown()
     assert android.taps == [PixelPoint(1290, 845), PixelPoint(720, 2040)]
     assert len(android.swipes) == 8
-    assert {path.duration_ms for path in android.swipes} == {300, 450, 600}
+    assert {path.duration_ms for path in android.swipes} == {400, 600, 800}
     assert (tmp_path / "screenshot-1.png").exists()
     assert (tmp_path / "screenshot-2.png").exists()
     assert (tmp_path / "letter-wheel-annotated.png").exists()
@@ -169,8 +169,8 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     swipe = json.loads((tmp_path / "swipe.json").read_text(encoding="utf-8"))
     assert swipe["word"] == "FOUND"
     assert swipe["accepted"] is True
-    assert swipe["duration_ms"] == 600
-    assert swipe["timestamps_ms"] == [0, 600]
+    assert swipe["duration_ms"] == 800
+    assert swipe["timestamps_ms"] == [0, 800]
     assert (tmp_path / "word_before.png").exists()
     assert (tmp_path / "word_after.png").exists()
     assert (tmp_path / "word_confirmed.png").exists()
