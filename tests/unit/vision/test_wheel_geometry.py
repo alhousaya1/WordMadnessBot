@@ -14,6 +14,7 @@ from word_madness_bot.domain.models import ScreenCapture
 from word_madness_bot.vision.wheel_geometry import (
     LetterWheelDetector,
     save_wheel_debug_artifacts,
+    wheel_search_bounds,
 )
 
 
@@ -23,7 +24,9 @@ def _capture(image: Image.Image) -> ScreenCapture:
     return ScreenCapture(output.getvalue(), ScreenSize(*image.size))
 
 
-def _synthetic_wheel(letter_count: int = 5, width: int = 800) -> ScreenCapture:
+def _synthetic_wheel(
+    letter_count: int = 5, width: int = 800, *, letter_gray: int = 15
+) -> ScreenCapture:
     height = round(width * 1.5)
     image = Image.new("RGB", (width, height), (40, 40, 40))
     draw = ImageDraw.Draw(image)
@@ -42,7 +45,7 @@ def _synthetic_wheel(letter_count: int = 5, width: int = 800) -> ScreenCapture:
         half_height = max(8, round(radius * 0.14))
         draw.rectangle(
             (x - half_width, y - half_height, x + half_width, y + half_height),
-            fill=(15, 15, 15),
+            fill=(letter_gray, letter_gray, letter_gray),
         )
     return _capture(image)
 
@@ -93,9 +96,7 @@ def test_annotation_and_json_artifacts_contain_detected_geometry(tmp_path: Path)
     detector = LetterWheelDetector()
     capture = _synthetic_wheel()
     geometry = detector.detect(capture)
-    annotated_path, json_path = save_wheel_debug_artifacts(
-        tmp_path, capture, geometry, detector
-    )
+    annotated_path, json_path = save_wheel_debug_artifacts(tmp_path, capture, geometry, detector)
     with Image.open(annotated_path) as annotated:
         assert annotated.size == (800, 1200)
         assert annotated.format == "PNG"
@@ -113,3 +114,23 @@ def test_detection_fails_without_a_circular_wheel() -> None:
     blank = _capture(Image.new("RGB", (800, 1200), (40, 40, 40)))
     with pytest.raises(WheelGeometryDetectionError, match="not detected"):
         LetterWheelDetector().detect(blank)
+
+
+@pytest.mark.parametrize(
+    ("size", "expected"),
+    [
+        (ScreenSize(1440, 3120), (0, 1716, 1440, 1154)),
+        (ScreenSize(720, 1560), (0, 858, 720, 577)),
+        (ScreenSize(1080, 2340), (0, 1287, 1080, 865)),
+    ],
+)
+def test_wheel_search_bounds_scale_from_reference(
+    size: ScreenSize, expected: tuple[int, int, int, int]
+) -> None:
+    bounds = wheel_search_bounds(size)
+    assert (bounds.left, bounds.top, bounds.width, bounds.height) == expected
+
+
+def test_detects_partially_faded_letters() -> None:
+    geometry = LetterWheelDetector().detect(_synthetic_wheel(6, letter_gray=145))
+    assert len(geometry.letters) == 6

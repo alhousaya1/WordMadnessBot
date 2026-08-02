@@ -10,11 +10,16 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from word_madness_bot.domain.errors import WheelGeometryDetectionError
-from word_madness_bot.domain.geometry import PixelPoint
+from word_madness_bot.domain.geometry import PixelPoint, PixelRect, ScreenSize
 from word_madness_bot.domain.models import ScreenCapture
 
 cv2: Any = import_module("cv2")
 np: Any = import_module("numpy")
+
+REFERENCE_SIZE = ScreenSize(1440, 3120)
+WHEEL_SEARCH_REFERENCE = PixelRect(0, 1716, 1440, 1154)
+EXPECTED_WHEEL_CENTER_REFERENCE = PixelPoint(720, 2327)
+EXPECTED_WHEEL_RADIUS_REFERENCE = 457
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,8 +54,7 @@ class LetterWheelGeometry:
             "wheel_center": {"x": self.center.x, "y": self.center.y},
             "radius": self.radius,
             "letter_coordinates": [
-                {"index": item.index, "x": item.point.x, "y": item.point.y}
-                for item in self.letters
+                {"index": item.index, "x": item.point.x, "y": item.point.y} for item in self.letters
             ],
             "number_of_letters": len(self.letters),
         }
@@ -73,17 +77,16 @@ class LetterWheelDetector:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         center, radius = _detect_wheel(gray)
         points = _detect_letter_positions(gray, center, radius)
-        if len(points) < 3:
+        if not 5 <= len(points) <= 7:
             raise WheelGeometryDetectionError(
-                f"Expected at least three letter positions, detected {len(points)}"
+                f"Expected 5 to 7 letter positions, detected {len(points)}"
             )
         ordered = sorted(points, key=lambda point: _clockwise_angle(point, center))
         return LetterWheelGeometry(
             center=center,
             radius=radius,
             letters=tuple(
-                LetterPosition(index=index, point=point)
-                for index, point in enumerate(ordered)
+                LetterPosition(index=index, point=point) for index, point in enumerate(ordered)
             ),
         )
 
@@ -147,9 +150,7 @@ def _detect_wheel(gray: Any) -> tuple[PixelPoint, int]:
     height, width = gray.shape[:2]
     roi_top = height // 2
     roi = gray[roi_top:, :]
-    otsu_threshold, _ = cv2.threshold(
-        roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
-    )
+    otsu_threshold, _ = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     bright_threshold = max(150, min(210, round(otsu_threshold) + 40))
     _, binary = cv2.threshold(roi, bright_threshold, 255, cv2.THRESH_BINARY)
     kernel_size = max(5, round(width * 0.02))
@@ -173,12 +174,82 @@ def _detect_wheel(gray: Any) -> tuple[PixelPoint, int]:
             and area >= width * width * 0.15
         ):
             candidates.append((area * circularity, contour))
-    if not candidates:
-        raise WheelGeometryDetectionError("Circular letter wheel was not detected")
+    if candidates:
+        contour = max(candidates, key=lambda item: item[0])[1]
+        (center_x, center_y), radius = cv2.minEnclosingCircle(contour)
+        center = PixelPoint(round(center_x), round(center_y) + roi_top)
+        rounded_radius = round(radius)
+        if (
+            _plausible_wheel_geometry(center, rounded_radius, width, height)
+            and 5 <= len(_detect_letter_positions(gray, center, rounded_radius)) <= 7
+        ):
+            return center, rounded_radius
+    return _detect_wheel_hough(gray)
 
-    contour = max(candidates, key=lambda item: item[0])[1]
-    (center_x, center_y), radius = cv2.minEnclosingCircle(contour)
-    return PixelPoint(round(center_x), round(center_y) + roi_top), round(radius)
+
+def wheel_search_bounds(size: ScreenSize) -> PixelRect:
+    """Scale stable 1440x3120 wheel search bounds to a capture size."""
+    left = round(WHEEL_SEARCH_REFERENCE.left * size.width / REFERENCE_SIZE.width)
+    top = round(WHEEL_SEARCH_REFERENCE.top * size.height / REFERENCE_SIZE.height)
+    right = round(
+        (WHEEL_SEARCH_REFERENCE.left + WHEEL_SEARCH_REFERENCE.width)
+        * size.width
+        / REFERENCE_SIZE.width
+    )
+    bottom = round(
+        (WHEEL_SEARCH_REFERENCE.top + WHEEL_SEARCH_REFERENCE.height)
+        * size.height
+        / REFERENCE_SIZE.height
+    )
+    return PixelRect(left, top, right - left, bottom - top)
+
+
+def _plausible_wheel_geometry(center: PixelPoint, radius: int, width: int, height: int) -> bool:
+    expected_x = EXPECTED_WHEEL_CENTER_REFERENCE.x * width / REFERENCE_SIZE.width
+    expected_y = EXPECTED_WHEEL_CENTER_REFERENCE.y * height / REFERENCE_SIZE.height
+    expected_radius = EXPECTED_WHEEL_RADIUS_REFERENCE * width / REFERENCE_SIZE.width
+    return (
+        abs(center.x - expected_x) <= width * 0.12
+        and abs(center.y - expected_y) <= height * 0.10
+        and abs(radius - expected_radius) <= width * 0.07
+    )
+
+
+def _detect_wheel_hough(gray: Any) -> tuple[PixelPoint, int]:
+    height, width = gray.shape
+    bounds = wheel_search_bounds(ScreenSize(width, height))
+    roi = gray[bounds.top : bounds.top + bounds.height, bounds.left : bounds.left + bounds.width]
+    blurred = cv2.GaussianBlur(roi, (9, 9), 2)
+    circles = cv2.HoughCircles(
+        blurred,
+        cv2.HOUGH_GRADIENT,
+        dp=1.5,
+        minDist=width * 0.20,
+        param1=80,
+        param2=35,
+        minRadius=round(width * 0.22),
+        maxRadius=round(width * 0.38),
+    )
+    if circles is None:
+        raise WheelGeometryDetectionError("Circular letter wheel was not detected")
+    expected_x = EXPECTED_WHEEL_CENTER_REFERENCE.x * width / REFERENCE_SIZE.width
+    expected_y = EXPECTED_WHEEL_CENTER_REFERENCE.y * height / REFERENCE_SIZE.height
+    expected_radius = EXPECTED_WHEEL_RADIUS_REFERENCE * width / REFERENCE_SIZE.width
+    ranked: list[tuple[float, PixelPoint, int]] = []
+    for x, y, radius_value in circles[0]:
+        center = PixelPoint(round(bounds.left + x), round(bounds.top + y))
+        radius = round(radius_value)
+        if not _plausible_wheel_geometry(center, radius, width, height):
+            continue
+        score = (
+            math.hypot(center.x - expected_x, center.y - expected_y) / width
+            + abs(radius - expected_radius) / width
+        )
+        ranked.append((score, center, radius))
+    for _, center, radius in sorted(ranked, key=lambda item: item[0]):
+        if 5 <= len(_detect_letter_positions(gray, center, radius)) <= 7:
+            return center, radius
+    raise WheelGeometryDetectionError("Circular letter wheel was not detected")
 
 
 def _detect_letter_positions(
@@ -186,9 +257,27 @@ def _detect_letter_positions(
     center: PixelPoint,
     radius: int,
 ) -> tuple[PixelPoint, ...]:
+    last: tuple[PixelPoint, ...] = ()
+    for maximum_gray in (115, 150, 180):
+        points = _detect_letter_positions_at_threshold(
+            gray, center, radius, maximum_gray=maximum_gray
+        )
+        if 5 <= len(points) <= 7:
+            return points
+        last = points
+    return last
+
+
+def _detect_letter_positions_at_threshold(
+    gray: Any,
+    center: PixelPoint,
+    radius: int,
+    *,
+    maximum_gray: int,
+) -> tuple[PixelPoint, ...]:
     mask = np.zeros(gray.shape, dtype=np.uint8)
     cv2.circle(mask, (center.x, center.y), round(radius * 0.82), 255, -1)
-    dark = cv2.inRange(gray, 0, 115)
+    dark = cv2.inRange(gray, 0, maximum_gray)
     dark = cv2.bitwise_and(dark, mask)
     contours, _ = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 

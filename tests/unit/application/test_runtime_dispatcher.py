@@ -158,3 +158,14 @@ def test_completion_home_uses_detected_button_center() -> None:
     assert result.state is RuntimeScreenState.COMPLETION_HOME
     assert result.action_point == PixelPoint(200, 475)
     assert result.action_region == button
+
+
+def test_unknown_without_positive_continue_evidence_has_no_action() -> None:
+    result = RuntimeScreenDispatcher(
+        Classifier(ScreenType.UNKNOWN).classify,
+        Overlays(),
+        Popup(),
+    ).dispatch(CAPTURE)
+
+    assert result.state is RuntimeScreenState.UNKNOWN
+    assert result.action_point is None

@@ -44,7 +44,7 @@ from word_madness_bot.domain.errors import (
     WordMadnessError,
     WordNotAcceptedError,
 )
-from word_madness_bot.domain.geometry import NormalizedPoint, PixelPoint, PixelRect
+from word_madness_bot.domain.geometry import PixelPoint, PixelRect
 from word_madness_bot.domain.models import ScreenCapture
 from word_madness_bot.gameplay.ads import AdvertisementPolicy
 from word_madness_bot.gameplay.swipe_generator import SwipePathPlanner
@@ -77,7 +77,8 @@ LevelFactory = Callable[[], LevelRepository]
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
 COMPLETION_HOME_TRANSITION_TIMEOUT_SECONDS = 23.0
-LEVEL_ENTRY_STABILIZATION_SECONDS = 5.0
+LEVEL_ENTRY_STABILIZATION_SECONDS = 10.0
+LEVEL_WHEEL_READY_RETRY_LIMIT = 20
 
 
 class RuntimeScreenClassifier(Protocol):
@@ -131,6 +132,7 @@ class ApplicationRuntime:
         completed_levels = 0
         screenshot_number = 0
         awaiting_level = False
+        awaiting_level_attempts = 0
         completion_home_started: float | None = None
         completion_home_attempts = 0
 
@@ -149,6 +151,7 @@ class ApplicationRuntime:
                         template_confidence=dispatch.classification.confidence,
                     )
                 awaiting_level = False
+                awaiting_level_attempts = 0
                 recognized = self._recognize_level_with_retries(capture)
                 if recognized is None:
                     continue
@@ -182,7 +185,9 @@ class ApplicationRuntime:
                     self.android.tap(point)
                     self.sleeper(LEVEL_ENTRY_STABILIZATION_SECONDS)
                 completion_home_attempts += 1
-                awaiting_level = False
+                awaiting_level = should_tap or awaiting_level
+                if should_tap:
+                    awaiting_level_attempts = 0
                 if not should_tap:
                     self.sleeper(0.5)
                 continue
@@ -197,19 +202,37 @@ class ApplicationRuntime:
                 self._log_start_level(point)
                 self.android.tap(point)
                 awaiting_level = True
+                awaiting_level_attempts = 0
                 self.sleeper(LEVEL_ENTRY_STABILIZATION_SECONDS)
+                continue
+
+            if awaiting_level and dispatch.state in {
+                RuntimeScreenState.UNKNOWN,
+                RuntimeScreenState.TAP_TO_CONTINUE,
+            }:
+                awaiting_level_attempts += 1
+                self.logger.info(
+                    "runtime.level.waiting_for_wheel",
+                    attempt=awaiting_level_attempts,
+                    maximum_attempts=LEVEL_WHEEL_READY_RETRY_LIMIT,
+                    detected_screen=(
+                        dispatch.classification.screen.value
+                        if dispatch.classification is not None
+                        else dispatch.state.value
+                    ),
+                )
+                if awaiting_level_attempts >= LEVEL_WHEEL_READY_RETRY_LIMIT:
+                    self.logger.warning(
+                        "runtime.level.wheel_wait_timeout",
+                        attempts=awaiting_level_attempts,
+                    )
+                    awaiting_level = False
+                self.sleeper(1.0)
                 continue
 
             if dispatch.action_point is not None:
                 self.android.tap(dispatch.action_point)
                 self.sleeper(0.5)
-                continue
-
-            if awaiting_level:
-                point = NormalizedPoint(0.500, 0.654).to_pixels(capture.size)
-                self._log_start_level(point)
-                self.android.tap(point)
-                self.sleeper(3.0)
                 continue
 
             self.sleeper(0.5)

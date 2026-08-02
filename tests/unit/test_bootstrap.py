@@ -303,7 +303,7 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     )
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps == [5.0, 10.0, 1.2, 1.2, 1.0, 0.5]
+    assert sleeps == [10.0, 10.0, 1.2, 1.2, 1.0, 0.5]
     assert android.captures == 5
     assert classifier.calls == 3
     output = stream.getvalue()
@@ -343,8 +343,8 @@ def test_completion_home_start_waits_before_first_level_detection(tmp_path: Path
     runtime.start(max_levels=1)
 
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps[0] == 5.0
-    assert sleeps.count(5.0) == 1
+    assert sleeps[0] == 10.0
+    assert sleeps.count(10.0) == 2
 
 
 def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
@@ -367,14 +367,15 @@ def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(100, 40), PixelPoint(540, 1569)]
-    assert sleeps == [0.5, 5.0, 10.0, 1.2, 1.2, 1.0, 0.5]
+    assert sleeps == [0.5, 10.0, 10.0, 1.2, 1.2, 1.0, 0.5]
     assert android.captures == 6
     assert classifier.calls == 4
 
 
-def test_entry_retries_every_three_seconds_until_level_appears(tmp_path: Path) -> None:
+def test_entry_waits_without_tapping_until_level_wheel_appears(tmp_path: Path) -> None:
     classifier = FakeClassifier(
         ScreenClassification(ScreenType.HOME_SCREEN, 0.98),
+        ScreenClassification(ScreenType.UNKNOWN, 0.2),
         ScreenClassification(ScreenType.UNKNOWN, 0.2),
         ScreenClassification(ScreenType.LEVEL_SCREEN, 0.96),
         ScreenClassification(ScreenType.HOME_SCREEN, 0.98),
@@ -384,8 +385,8 @@ def test_entry_retries_every_three_seconds_until_level_appears(tmp_path: Path) -
 
     _build(android, classifier, tmp_path, sleeper=sleeps.append).start(max_levels=1)
 
-    assert android.taps == [PixelPoint(540, 1569), PixelPoint(540, 1569)]
-    assert sleeps[:3] == [5.0, 3.0, 10.0]
+    assert android.taps == [PixelPoint(540, 1569)]
+    assert sleeps[:3] == [10.0, 1.0, 1.0]
 
 
 def test_capture_failure_is_logged_and_raised(tmp_path: Path) -> None:
@@ -549,3 +550,27 @@ def test_level_ocr_retries_with_fresh_screenshots(tmp_path: Path) -> None:
     assert sleeps[:2] == [0.5, 0.5]
     assert (tmp_path / "level-ocr-retry-1.png").exists()
     assert (tmp_path / "level-ocr-retry-2.png").exists()
+
+
+def test_post_start_tap_to_continue_false_positive_does_not_tap(tmp_path: Path) -> None:
+    android = FakeAndroid()
+    sleeps: list[float] = []
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+            ScreenClassification(ScreenType.UNKNOWN, 0.2),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        sleeper=sleeps.append,
+    )
+    original_dispatcher = runtime.level_executor.completion_overlay_detector
+    assert original_dispatcher is not None
+    original_dispatcher.tap_to_continue_visible = lambda capture: True  # type: ignore[method-assign]
+
+    runtime.start(max_levels=1)
+
+    assert android.taps == [PixelPoint(540, 1569)]
+    assert sleeps[:2] == [10.0, 1.0]

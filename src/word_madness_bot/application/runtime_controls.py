@@ -37,7 +37,7 @@ class CompletionOverlayDetector:
 
     def tap_to_continue_visible(self, capture: ScreenCapture) -> bool:
         image = _decode_color(capture)
-        if _has_yellow_level_button(image):
+        if _has_yellow_level_button(image) or _has_playable_wheel(image):
             return False
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         height, width = gray.shape
@@ -84,6 +84,33 @@ class CompletionOverlayDetector:
             and _green_switch_count(image) >= 2
             and _text_row_count(content) >= 4
         )
+
+
+def _has_playable_wheel(image: Any) -> bool:
+    """Reject playable-level wheels before looking for a continue prompt."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    height, width = gray.shape
+    top = round(height * 0.55)
+    bottom = round(height * 0.92)
+    roi = cv2.GaussianBlur(gray[top:bottom, :], (9, 9), 2)
+    circles = cv2.HoughCircles(
+        roi,
+        cv2.HOUGH_GRADIENT,
+        dp=1.5,
+        minDist=width * 0.20,
+        param1=80,
+        param2=35,
+        minRadius=round(width * 0.22),
+        maxRadius=round(width * 0.38),
+    )
+    if circles is None:
+        return False
+    return any(
+        abs(x - width * 0.50) <= width * 0.12
+        and abs(top + y - height * 0.746) <= height * 0.10
+        and abs(radius - width * 0.317) <= width * 0.07
+        for x, y, radius in circles[0]
+    )
 
 
 def _has_text_line(region: Any, *, minimum_components: int) -> bool:
