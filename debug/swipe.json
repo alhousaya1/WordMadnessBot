@@ -1,0 +1,44 @@
+{
+  "accepted": true,
+  "backend_command": [
+    "uiautomator2",
+    "swipe_points",
+    "R3CY40ZJD4P"
+  ],
+  "coordinates": [
+    {
+      "x": 415,
+      "y": 2228
+    },
+    {
+      "x": 532,
+      "y": 2587
+    },
+    {
+      "x": 904,
+      "y": 2584
+    },
+    {
+      "x": 1024,
+      "y": 2228
+    },
+    {
+      "x": 719,
+      "y": 2015
+    }
+  ],
+  "duration_ms": 500,
+  "elapsed_seconds": 4.310348800005158,
+  "timestamps_ms": [
+    0,
+    125,
+    250,
+    375,
+    500
+  ],
+  "verification": {
+    "changed_pixel_ratio": 0.18640910965990934,
+    "mean_absolute_difference": 19.599758350108313
+  },
+  "word": "ANGEL"
+}

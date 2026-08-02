@@ -1,0 +1,4 @@
+touch down 415 2228
+touch move 720 2015
+touch move 908 2587
+touch up 908 2587

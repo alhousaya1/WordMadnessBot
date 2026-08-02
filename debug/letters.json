@@ -1,0 +1,30 @@
+{
+  "letters": [
+    {
+      "character": "E",
+      "confidence": 0.8935821354389191,
+      "index": 0
+    },
+    {
+      "character": "G",
+      "confidence": 0.8931542634963989,
+      "index": 1
+    },
+    {
+      "character": "N",
+      "confidence": 0.9180651009082794,
+      "index": 2
+    },
+    {
+      "character": "A",
+      "confidence": 0.8975739479064941,
+      "index": 3
+    },
+    {
+      "character": "L",
+      "confidence": 0.9155539870262146,
+      "index": 4
+    }
+  ],
+  "level": null
+}
