@@ -256,6 +256,10 @@ def test_start_captures_classifies_and_logs_level_entry(tmp_path: Path) -> None:
     assert '"detected_screen": "level_screen"' in output
     assert '"template_confidence": 0.97' in output
     assert '"event": "runtime.level.entered"' in output
+    assert '"event": "runtime.level.entry_wait_started"' in output
+    assert '"event": "runtime.level.entry_wait_completed"' in output
+    assert '"event": "runtime.level.fresh_capture_after_wait"' in output
+    assert '"wait_duration_ms": 5000' in output
     assert '"event": "runtime.wheel.detected"' in output
     assert '"center_x": 540' in output
     assert '"center_y": 1800' in output
@@ -307,7 +311,7 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     )
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps == [4.0, 0.1, 1.0, 0.5]
+    assert sleeps == [5.0, 0.1, 1.0, 0.5]
     assert android.captures == 4
     assert classifier.calls == 3
     output = stream.getvalue()
@@ -347,8 +351,8 @@ def test_completion_home_start_waits_before_first_level_detection(tmp_path: Path
     runtime.start(max_levels=1)
 
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps[0] == 4.0
-    assert sleeps.count(4.0) == 1
+    assert sleeps[0] == 5.0
+    assert sleeps.count(5.0) == 1
 
 
 def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
@@ -371,7 +375,7 @@ def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(100, 40), PixelPoint(540, 1569)]
-    assert sleeps == [0.5, 4.0, 0.1, 1.0, 0.5]
+    assert sleeps == [0.5, 5.0, 0.1, 1.0, 0.5]
     assert android.captures == 5
     assert classifier.calls == 4
 
@@ -390,7 +394,7 @@ def test_entry_waits_without_tapping_until_level_wheel_appears(tmp_path: Path) -
     _build(android, classifier, tmp_path, sleeper=sleeps.append).start(max_levels=1)
 
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps[:3] == [4.0, 1.0, 1.0]
+    assert sleeps[:3] == [5.0, 1.0, 1.0]
 
 
 def test_capture_failure_is_logged_and_raised(tmp_path: Path) -> None:
@@ -586,7 +590,7 @@ def test_post_start_tap_to_continue_false_positive_does_not_tap(tmp_path: Path) 
     runtime.start(max_levels=1)
 
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps[:2] == [4.0, 1.0]
+    assert sleeps[:2] == [5.0, 1.0]
 
 
 def test_reset_level_cycle_discards_all_previous_level_state(tmp_path: Path) -> None:
@@ -686,11 +690,14 @@ def test_ten_sequential_levels_have_isolated_cycles_and_unchanged_timing(
     assert len(android.swipes) == 20
     assert all(path.duration_ms == (len(path.points) - 1) * 200 for path in android.swipes)
     assert sleeps.count(0.1) == 10
+    assert sleeps.count(5.0) == 10
     assert runtime._cycle_sequence == 10
     assert runtime._cycle_state is not None
     assert runtime._cycle_state.cycle_id == "cycle-000010"
     assert runtime._cycle_state.completed
     output = stream.getvalue()
+    assert output.count('"event": "runtime.level.entry_wait_started"') == 10
+    assert output.count('"event": "runtime.level.entry_wait_completed"') == 10
     for number in range(1, 11):
         assert f'"cycle_id": "cycle-{number:06d}"' in output
 
@@ -903,4 +910,148 @@ def test_confirmed_level_still_requires_letter_cross_validation(tmp_path: Path) 
     runtime.start(max_levels=1)
 
     assert letters.calls == 2
+    assert len(android.swipes) == 2
+
+
+class CountWheelDetector(FakeWheelDetector):
+    def __init__(self, count: int, *, first_count: int | None = None) -> None:
+        super().__init__()
+        self.count = count
+        self.first_count = first_count
+
+    def detect(self, capture: ScreenCapture) -> LetterWheelGeometry:
+        self.calls += 1
+        count = self.first_count if self.calls == 1 and self.first_count is not None else self.count
+        return LetterWheelGeometry(
+            center=PixelPoint(540, 1800),
+            radius=300,
+            letters=tuple(
+                LetterPosition(
+                    index,
+                    PixelPoint(300 + index * 100, 1700 + (index % 2) * 200),
+                )
+                for index in range(count)
+            ),
+        )
+
+
+class CountLetterRecognizer(FakeLetterRecognizer):
+    def recognize(
+        self,
+        capture: ScreenCapture,
+        geometry: LetterWheelGeometry,
+        debug_directory: Path,
+    ) -> WheelLetterRecognition:
+        self.calls += 1
+        characters = "ABCDEFG"
+        return WheelLetterRecognition(
+            tuple(
+                RecognizedLetter(
+                    index=position.index,
+                    character=characters[position.index],
+                    confidence=0.9,
+                    elapsed_seconds=0.01,
+                    crop_path=debug_directory / "letters" / f"letter-{position.index}.png",
+                )
+                for position in geometry.letters
+            )
+        )
+
+
+def test_no_gameplay_processing_occurs_before_five_second_wait(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+
+    class EventAndroid(FakeAndroid):
+        def swipe(self, path: SwipePath) -> SwipeExecutionReceipt:
+            events.append("swipe")
+            return super().swipe(path)
+
+    class EventWheel(FakeWheelDetector):
+        def detect(self, capture: ScreenCapture) -> LetterWheelGeometry:
+            events.append("wheel")
+            return super().detect(capture)
+
+    class EventLetters(FakeLetterRecognizer):
+        def recognize(
+            self,
+            capture: ScreenCapture,
+            geometry: LetterWheelGeometry,
+            debug_directory: Path,
+        ) -> WheelLetterRecognition:
+            events.append("letters")
+            return super().recognize(capture, geometry, debug_directory)
+
+    android = EventAndroid()
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        sleeper=lambda duration: events.append(f"sleep:{duration}"),
+        wheel_detector=EventWheel(),
+        letter_recognizer=EventLetters(),
+    )
+
+    runtime.start(max_levels=1)
+
+    wait_index = events.index("sleep:5.0")
+    assert wait_index < events.index("wheel") < events.index("letters") < events.index("swipe")
+
+
+@pytest.mark.parametrize("letter_count", [5, 6, 7])
+def test_complete_supported_wheel_proceeds_after_entry_wait(
+    tmp_path: Path, letter_count: int
+) -> None:
+    sleeps: list[float] = []
+    detector = CountWheelDetector(letter_count)
+    letters = CountLetterRecognizer()
+    android = FakeAndroid()
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        sleeper=sleeps.append,
+        wheel_detector=detector,
+        letter_recognizer=letters,
+    )
+
+    runtime.start(max_levels=1)
+
+    assert sleeps[0] == 5.0
+    assert detector.calls == 1
+    assert letters.calls == 1
+    assert len(android.swipes) == 2
+
+
+def test_incomplete_wheel_retries_fresh_capture_without_tapping(
+    tmp_path: Path,
+) -> None:
+    detector = CountWheelDetector(5, first_count=4)
+    android = FakeAndroid()
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        wheel_detector=detector,
+        letter_recognizer=CountLetterRecognizer(),
+    )
+
+    runtime.start(max_levels=1)
+
+    assert detector.calls == 2
+    assert android.taps == [PixelPoint(540, 1569)]
     assert len(android.swipes) == 2

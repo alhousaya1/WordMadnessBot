@@ -79,7 +79,7 @@ LevelFactory = Callable[[], LevelRepository]
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
 COMPLETION_HOME_TRANSITION_TIMEOUT_SECONDS = 23.0
-LEVEL_ENTRY_STABILIZATION_SECONDS = 4.0
+LEVEL_ENTRY_STABILIZATION_SECONDS = 5.0
 RECENT_DEBUG_CYCLE_LIMIT = 10
 
 
@@ -166,10 +166,22 @@ class ApplicationRuntime:
         awaiting_level = False
         completion_home_started: float | None = None
         completion_home_attempts = 0
+        fresh_capture_after_entry_wait = False
 
         while max_levels is None or completed_levels < max_levels:
             screenshot_number += 1
             capture = self._capture_debug_screenshot(f"screenshot-{screenshot_number}.png")
+            if fresh_capture_after_entry_wait:
+                cycle = self._cycle_state
+                self.logger.info(
+                    "runtime.level.fresh_capture_after_wait",
+                    cycle_id=cycle.cycle_id if cycle is not None else None,
+                    confirmed_home_level=(
+                        cycle.confirmed_home_level if cycle is not None else None
+                    ),
+                    fresh_capture_after_wait=True,
+                )
+                fresh_capture_after_entry_wait = False
             dispatch = dispatcher.dispatch(capture)
             self.logger.info("runtime.screen.dispatched", runtime_state=dispatch.state.value)
 
@@ -233,7 +245,8 @@ class ApplicationRuntime:
                         cycle_id=self._cycle_state.cycle_id if self._cycle_state else None,
                     )
                     self.android.tap(point)
-                    self.sleeper(LEVEL_ENTRY_STABILIZATION_SECONDS)
+                    self._wait_for_level_entry(cycle)
+                    fresh_capture_after_entry_wait = True
                 completion_home_attempts += 1
                 awaiting_level = should_tap or awaiting_level
                 if not should_tap:
@@ -269,7 +282,8 @@ class ApplicationRuntime:
                 self._log_start_level(point, cycle_id=cycle.cycle_id)
                 self.android.tap(point)
                 awaiting_level = True
-                self.sleeper(LEVEL_ENTRY_STABILIZATION_SECONDS)
+                self._wait_for_level_entry(cycle)
+                fresh_capture_after_entry_wait = True
                 continue
 
             if awaiting_level and dispatch.state in {
@@ -301,11 +315,32 @@ class ApplicationRuntime:
         self._started = True
         self.logger.info("runtime.started", dry_run=False)
 
+    def _wait_for_level_entry(self, cycle: LevelCycleState) -> None:
+        wait_duration_ms = round(LEVEL_ENTRY_STABILIZATION_SECONDS * 1000)
+        self.logger.info(
+            "runtime.level.entry_wait_started",
+            cycle_id=cycle.cycle_id,
+            confirmed_home_level=cycle.confirmed_home_level,
+            wait_duration_ms=wait_duration_ms,
+        )
+        self.sleeper(LEVEL_ENTRY_STABILIZATION_SECONDS)
+        self.logger.info(
+            "runtime.level.entry_wait_completed",
+            cycle_id=cycle.cycle_id,
+            confirmed_home_level=cycle.confirmed_home_level,
+            wait_duration_ms=wait_duration_ms,
+        )
+
     def _reset_level_cycle(self) -> LevelCycleState:
         self._cycle_sequence += 1
         state = LevelCycleState(f"cycle-{self._cycle_sequence:06d}")
         self._cycle_state = state
         self._prune_debug_cycles()
+        self.logger.info(
+            "runtime.level.next_cycle_started",
+            cycle_id=state.cycle_id,
+            confirmed_home_level=None,
+        )
         return state
 
     def _prune_debug_cycles(self) -> None:
@@ -475,6 +510,13 @@ class ApplicationRuntime:
                 capture = retry_capture
                 continue
             cycle.solution_plan = plan
+            self.logger.info(
+                "runtime.level.letters_validated",
+                cycle_id=cycle.cycle_id,
+                confirmed_home_level=cycle.confirmed_home_level,
+                number_of_letters=len(recognition.letters),
+                letters_validated=True,
+            )
             return capture, plan
 
     def _retry_level_recognition(
@@ -645,6 +687,7 @@ class ApplicationRuntime:
         self.logger.info(
             "runtime.wheel.detected",
             cycle_id=cycle_id,
+            wheel_detected=True,
             detection_duration_seconds=self.clock() - started,
             center_x=geometry.center.x,
             center_y=geometry.center.y,
