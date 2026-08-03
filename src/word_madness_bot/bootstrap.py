@@ -593,7 +593,7 @@ def build_runtime(
             popup_close_button_detector or UpperRightPopupCloseDetector(),
             completion_overlay_detector or CompletionOverlayDetector(),
             logger=runtime_logger,
-            first_word_readiness_delay_seconds=settings.first_word_readiness_delay_seconds,
+            inter_word_delay_seconds=settings.inter_word_safety_delay_seconds,
             clock=clock,
             sleeper=sleeper,
         ),

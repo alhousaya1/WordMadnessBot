@@ -21,8 +21,7 @@ class Settings:
     adb_timeout_seconds: float = 15.0
     adb_retries: int = 2
     swipe_segment_duration_seconds: float = 0.200
-    inter_word_safety_delay_seconds: float = 0.0
-    first_word_readiness_delay_seconds: float = 0.500
+    inter_word_safety_delay_seconds: float = 0.100
     log_level: str = "INFO"
     data_directory: Path = Path("data")
     log_directory: Path = Path("logs")
@@ -37,8 +36,6 @@ class Settings:
             raise ConfigurationError("adb_timeout_seconds must be greater than zero")
         if self.swipe_segment_duration_seconds <= 0:
             raise ConfigurationError("swipe_segment_duration_seconds must be greater than zero")
-        if self.first_word_readiness_delay_seconds < 0:
-            raise ConfigurationError("first_word_readiness_delay_seconds cannot be negative")
         if not 0 <= self.inter_word_safety_delay_seconds <= 0.100:
             raise ConfigurationError(
                 "inter_word_safety_delay_seconds must be between zero and 0.100"
@@ -69,12 +66,8 @@ class Settings:
                 "SWIPE_SEGMENT_DURATION_SECONDS",
             ),
             inter_word_safety_delay_seconds=_bounded_delay(
-                values.get(f"{cls.ENV_PREFIX}INTER_WORD_SAFETY_DELAY_SECONDS", "0"),
+                values.get(f"{cls.ENV_PREFIX}INTER_WORD_SAFETY_DELAY_SECONDS", "0.100"),
                 "INTER_WORD_SAFETY_DELAY_SECONDS",
-            ),
-            first_word_readiness_delay_seconds=_non_negative_float(
-                values.get(f"{cls.ENV_PREFIX}FIRST_WORD_READINESS_DELAY_SECONDS", "0.500"),
-                "FIRST_WORD_READINESS_DELAY_SECONDS",
             ),
             log_level=values.get(f"{cls.ENV_PREFIX}LOG_LEVEL", "INFO"),
             data_directory=Path(values.get(f"{cls.ENV_PREFIX}DATA_DIRECTORY", "data")),
@@ -122,16 +115,6 @@ def _non_negative_int(value: str, name: str) -> int:
         parsed = int(value)
     except ValueError as error:
         raise ConfigurationError(f"{name} must be an integer") from error
-    if parsed < 0:
-        raise ConfigurationError(f"{name} cannot be negative")
-    return parsed
-
-
-def _non_negative_float(value: str, name: str) -> float:
-    try:
-        parsed = float(value)
-    except ValueError as error:
-        raise ConfigurationError(f"{name} must be a number") from error
     if parsed < 0:
         raise ConfigurationError(f"{name} cannot be negative")
     return parsed
