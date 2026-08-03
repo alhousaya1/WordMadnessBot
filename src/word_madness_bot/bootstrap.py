@@ -60,6 +60,7 @@ from word_madness_bot.vision.letter_recognition import (
 from word_madness_bot.vision.level_number import (
     LevelNumberRecognitionPort,
     LevelNumberRecognizer,
+    parse_level_number,
 )
 from word_madness_bot.vision.screen_classifier import (
     ScreenClassification,
@@ -93,6 +94,7 @@ class LevelCycleState:
     """All recognition state whose lifetime is exactly one level attempt."""
 
     cycle_id: str
+    confirmed_home_level: int | None = None
     level_number: int | None = None
     wheel_geometry: LetterWheelGeometry | None = None
     recognized_letters: WheelLetterRecognition | None = None
@@ -190,6 +192,7 @@ class ApplicationRuntime:
                 self.logger.info("runtime.level.solving_started", cycle_id=cycle.cycle_id)
                 self._execute_level(capture, plan, cycle_id=cycle.cycle_id)
                 cycle.completed = True
+                cycle.confirmed_home_level = None
                 completed_levels += 1
                 continue
 
@@ -211,6 +214,12 @@ class ApplicationRuntime:
                         f"within {COMPLETION_HOME_TRANSITION_TIMEOUT_SECONDS:.0f} seconds"
                     )
 
+                cycle = self._cycle_state or self._reset_level_cycle()
+                if cycle.confirmed_home_level is None and not self._confirm_home_level(
+                    capture, cycle
+                ):
+                    self.sleeper(0.5)
+                    continue
                 point = dispatch.action_point
                 should_tap = completion_home_attempts == 0
                 if should_tap:
@@ -251,6 +260,9 @@ class ApplicationRuntime:
                         dispatch.classification.confidence if dispatch.classification else None
                     ),
                 )
+                if not self._confirm_home_level(capture, cycle):
+                    self.sleeper(0.5)
+                    continue
                 point = dispatch.action_point
                 if point is None:
                     raise RuntimeNavigationError("Home dispatcher did not provide a Level tap")
@@ -306,6 +318,36 @@ class ApplicationRuntime:
         for expired in cycles[:-RECENT_DEBUG_CYCLE_LIMIT]:
             shutil.rmtree(expired)
 
+    def _confirm_home_level(self, capture: ScreenCapture, cycle: LevelCycleState) -> bool:
+        try:
+            number = self.level_number_recognizer.recognize(capture)
+            self.levels.get_level(number)
+        except (OcrError, LevelNotFoundError) as error:
+            candidates = tuple(getattr(self.level_number_recognizer, "last_candidates", ()))
+            self.logger.warning(
+                "runtime.home.level_number_failed",
+                cycle_id=cycle.cycle_id,
+                raw_candidates=list(candidates),
+                selected_candidate=None,
+                error=str(error),
+            )
+            cycle.confirmed_home_level = None
+            return False
+        candidates = tuple(getattr(self.level_number_recognizer, "last_candidates", ()))
+        selected = next(
+            (candidate for candidate in candidates if parse_level_number(candidate) == number),
+            str(number),
+        )
+        cycle.confirmed_home_level = number
+        self.logger.info(
+            "runtime.home.level_confirmed",
+            cycle_id=cycle.cycle_id,
+            confirmed_home_level=number,
+            raw_candidates=list(candidates),
+            selected_candidate=selected,
+        )
+        return True
+
     def _prepare_level_with_retries(
         self,
         capture: ScreenCapture,
@@ -322,24 +364,96 @@ class ApplicationRuntime:
                     raise WheelGeometryDetectionError(
                         f"Expected 5, 6, or 7 wheel letters; detected {len(geometry.letters)}"
                     )
-                cycle.wheel_geometry = geometry
-                self.logger.info(
-                    "runtime.level.screen_detected",
-                    cycle_id=cycle.cycle_id,
-                    wheel_visible=True,
-                    number_of_letters=len(geometry.letters),
+            except WheelGeometryDetectionError as error:
+                retry_capture = self._retry_level_recognition(
+                    dispatcher,
+                    cycle,
+                    event="runtime.level.waiting_for_letters",
+                    error=error,
                 )
-                number = self.level_number_recognizer.recognize(capture)
-                self.levels.get_level(number)
-                cycle.level_number = number
-                cycle.validation_candidates = tuple(
+                if retry_capture is None:
+                    return None
+                capture = retry_capture
+                continue
+
+            cycle.wheel_geometry = geometry
+            self.logger.info(
+                "runtime.level.screen_detected",
+                cycle_id=cycle.cycle_id,
+                wheel_visible=True,
+                number_of_letters=len(geometry.letters),
+            )
+            title_candidates: tuple[str, ...]
+            try:
+                title_number = self.level_number_recognizer.recognize(capture)
+                self.levels.get_level(title_number)
+                title_candidates = tuple(
                     getattr(self.level_number_recognizer, "last_candidates", ())
                 )
-                self.logger.info(
-                    "runtime.level.detected",
-                    cycle_id=cycle.cycle_id,
-                    detected_level=number,
+            except (OcrError, LevelNotFoundError) as error:
+                title_candidates = tuple(
+                    getattr(self.level_number_recognizer, "last_candidates", ())
                 )
+                if cycle.confirmed_home_level is not None and not title_candidates:
+                    number = cycle.confirmed_home_level
+                    self.logger.info(
+                        "runtime.level.waiting_for_level_number",
+                        cycle_id=cycle.cycle_id,
+                        raw_candidates=[],
+                        confirmed_home_level=number,
+                        fallback_used=True,
+                        error=str(error),
+                    )
+                else:
+                    retry_capture = self._retry_level_recognition(
+                        dispatcher,
+                        cycle,
+                        event="runtime.level.waiting_for_level_number",
+                        error=error,
+                    )
+                    if retry_capture is None:
+                        return None
+                    capture = retry_capture
+                    continue
+            else:
+                if (
+                    cycle.confirmed_home_level is not None
+                    and title_number != cycle.confirmed_home_level
+                ):
+                    self.logger.warning(
+                        "runtime.level.level_number_mismatch",
+                        cycle_id=cycle.cycle_id,
+                        confirmed_home_level=cycle.confirmed_home_level,
+                        gameplay_title_level=title_number,
+                        raw_candidates=list(title_candidates),
+                    )
+                    retry_capture = self._retry_level_recognition(
+                        dispatcher,
+                        cycle,
+                        event="runtime.level.waiting_for_level_number",
+                        error=OcrError("Gameplay title does not match confirmed home level"),
+                    )
+                    if retry_capture is None:
+                        return None
+                    capture = retry_capture
+                    continue
+                number = title_number
+                self.logger.info(
+                    "runtime.level.level_number_confirmed",
+                    cycle_id=cycle.cycle_id,
+                    confirmed_home_level=cycle.confirmed_home_level,
+                    gameplay_title_level=title_number,
+                    raw_candidates=list(title_candidates),
+                )
+
+            cycle.level_number = number
+            cycle.validation_candidates = title_candidates
+            self.logger.info(
+                "runtime.level.detected",
+                cycle_id=cycle.cycle_id,
+                detected_level=number,
+            )
+            try:
                 recognition = self._recognize_letters(capture, geometry, cycle_id=cycle.cycle_id)
                 cycle.recognized_letters = recognition
                 plan = self._plan_level_solution(
@@ -349,44 +463,58 @@ class ApplicationRuntime:
                     level_number=number,
                     cycle_id=cycle.cycle_id,
                 )
-                cycle.solution_plan = plan
-                return capture, plan
-            except (
-                WheelGeometryDetectionError,
-                OcrError,
-                LevelNotFoundError,
-                WordMadnessError,
-            ) as error:
-                cycle.recognition_retry += 1
-                self.logger.warning(
-                    "runtime.level.waiting_for_letters",
-                    cycle_id=cycle.cycle_id,
-                    attempt=cycle.recognition_retry,
-                    error=str(error),
+            except WordMadnessError as error:
+                retry_capture = self._retry_level_recognition(
+                    dispatcher,
+                    cycle,
+                    event="runtime.level.waiting_for_letters",
+                    error=error,
                 )
-                self.logger.info(
-                    "runtime.level.recovery_retry",
-                    cycle_id=cycle.cycle_id,
-                    attempt=cycle.recognition_retry,
-                )
-                self.sleeper(0.5)
-                capture = self._capture_debug_screenshot(
-                    f"{cycle.cycle_id}/recognition-retry-{cycle.recognition_retry:04d}.png"
-                )
-                dispatch = dispatcher.dispatch(capture)
-                if dispatch.state is RuntimeScreenState.LEVEL:
-                    continue
-                if dispatch.state in {
-                    RuntimeScreenState.UNKNOWN,
-                    RuntimeScreenState.TAP_TO_CONTINUE,
-                }:
-                    continue
-                self.logger.info(
-                    "runtime.level.recovery_screen_changed",
-                    cycle_id=cycle.cycle_id,
-                    detected_state=dispatch.state.value,
-                )
-                return None
+                if retry_capture is None:
+                    return None
+                capture = retry_capture
+                continue
+            cycle.solution_plan = plan
+            return capture, plan
+
+    def _retry_level_recognition(
+        self,
+        dispatcher: RuntimeScreenDispatcher,
+        cycle: LevelCycleState,
+        *,
+        event: str,
+        error: Exception,
+    ) -> ScreenCapture | None:
+        cycle.recognition_retry += 1
+        self.logger.warning(
+            event,
+            cycle_id=cycle.cycle_id,
+            attempt=cycle.recognition_retry,
+            error=str(error),
+        )
+        self.logger.info(
+            "runtime.level.recovery_retry",
+            cycle_id=cycle.cycle_id,
+            attempt=cycle.recognition_retry,
+        )
+        self.sleeper(0.5)
+        capture = self._capture_debug_screenshot(
+            f"{cycle.cycle_id}/recognition-retry-{cycle.recognition_retry:04d}.png"
+        )
+        dispatch = dispatcher.dispatch(capture)
+        if dispatch.state in {
+            RuntimeScreenState.LEVEL,
+            RuntimeScreenState.UNKNOWN,
+            RuntimeScreenState.TAP_TO_CONTINUE,
+        }:
+            return capture
+        cycle.confirmed_home_level = None
+        self.logger.info(
+            "runtime.level.recovery_screen_changed",
+            cycle_id=cycle.cycle_id,
+            detected_state=dispatch.state.value,
+        )
+        return None
 
     def _recognize_level_with_retries(
         self, capture: ScreenCapture, *, attempts: int = 3

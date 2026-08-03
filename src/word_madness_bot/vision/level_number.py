@@ -97,10 +97,16 @@ class LevelNumberRecognizer:
             source = Image.open(io.BytesIO(capture.data)).convert("RGB")
         except (OSError, ValueError) as error:
             raise OcrError("Unable to decode screenshot for level recognition") from error
-        reference = (
-            HOME_LEVEL_TEXT_REFERENCE if _has_yellow_level_button(source) else LEVEL_TITLE_REFERENCE
-        )
-        crop_rect = scale_reference_rect(reference, capture.size)
+        button = _yellow_level_button(source)
+        if button is not None:
+            crop_rect = PixelRect(
+                button.left + round(button.width * 0.11),
+                button.top + round(button.height * 0.05),
+                max(1, round(button.width * 0.79)),
+                max(1, round(button.height * 0.85)),
+            )
+        else:
+            crop_rect = scale_reference_rect(LEVEL_TITLE_REFERENCE, capture.size)
         self.last_crop = crop_rect
         crop = source.crop(
             (
@@ -235,7 +241,7 @@ def _recognize_with_tesseract(variants: dict[str, Image.Image]) -> list[str]:
     return candidates
 
 
-def _has_yellow_level_button(image: Image.Image) -> bool:
+def _yellow_level_button(image: Image.Image) -> PixelRect | None:
     hsv = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2HSV)
     mask = cv2.inRange(
         hsv, np.array((15, 100, 120), dtype=np.uint8), np.array((42, 255, 255), dtype=np.uint8)
@@ -245,7 +251,26 @@ def _has_yellow_level_button(image: Image.Image) -> bool:
         round(height * 0.52) : round(height * 0.78), round(width * 0.15) : round(width * 0.85)
     ]
     contours, _ = cv2.findContours(region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    return any(cv2.contourArea(contour) >= width * height * 0.015 for contour in contours)
+    candidates: list[tuple[float, PixelRect]] = []
+    region_left = round(width * 0.15)
+    region_top = round(height * 0.52)
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        if area < width * height * 0.015:
+            continue
+        left, top, candidate_width, candidate_height = cv2.boundingRect(contour)
+        candidates.append(
+            (
+                area,
+                PixelRect(
+                    region_left + int(left),
+                    region_top + int(top),
+                    int(candidate_width),
+                    int(candidate_height),
+                ),
+            )
+        )
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
 
 
 def _numeric_suffix(glyphs: list[_Glyph]) -> list[_Glyph]:

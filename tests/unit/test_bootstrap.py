@@ -210,7 +210,7 @@ def _build(
         logger=logger or StructuredLogger(logging.getLogger("test.runtime")),
         android_factory=lambda settings, supplied_logger: cast(AndroidPort, android),
         level_factory=lambda: JsonLevelRepository.from_json(
-            '{"levels":[{"number":1,"words":["AB","CAB"]}]}'
+            '{"levels":[{"number":1,"words":["AB","CAB"]},{"number":2,"words":["AB","CAB"]}]}'
         ),
         screen_classifier=classifier,
         wheel_detector=wheel_detector or FakeWheelDetector(),
@@ -693,3 +693,214 @@ def test_ten_sequential_levels_have_isolated_cycles_and_unchanged_timing(
     output = stream.getvalue()
     for number in range(1, 11):
         assert f'"cycle_id": "cycle-{number:06d}"' in output
+
+
+class SequencedLevelNumberRecognizer:
+    def __init__(self, *values: int | None, android: FakeAndroid | None = None) -> None:
+        self.values = iter(values)
+        self.android = android
+        self.calls = 0
+        self.tap_counts: list[int] = []
+        self.last_candidates: tuple[str, ...] = ()
+
+    def recognize(self, capture: ScreenCapture) -> int:
+        self.calls += 1
+        if self.android is not None:
+            self.tap_counts.append(len(self.android.taps))
+        value = next(self.values)
+        if value is None:
+            self.last_candidates = ()
+            raise OcrError("No level-number OCR candidates were returned")
+        self.last_candidates = (f"Level {value}",)
+        return value
+
+
+class WrongThenCorrectLetterRecognizer(FakeLetterRecognizer):
+    def recognize(
+        self,
+        capture: ScreenCapture,
+        geometry: LetterWheelGeometry,
+        debug_directory: Path,
+    ) -> WheelLetterRecognition:
+        self.calls += 1
+        characters = "XXXXX" if self.calls == 1 else "ABCDE"
+        return WheelLetterRecognition(
+            tuple(
+                RecognizedLetter(
+                    index=position.index,
+                    character=character,
+                    confidence=0.9,
+                    elapsed_seconds=0.01,
+                    crop_path=debug_directory / "letters" / f"letter-{position.index}.png",
+                )
+                for position, character in zip(geometry.letters, characters, strict=True)
+            )
+        )
+
+
+def test_home_level_is_confirmed_before_start_tap(tmp_path: Path) -> None:
+    android = FakeAndroid()
+    recognizer = SequencedLevelNumberRecognizer(1, 1, android=android)
+    stream = io.StringIO()
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        level_number_recognizer=recognizer,
+        logger=configure_logging(name="test.confirm-home", stream=stream),
+    )
+
+    runtime.start(max_levels=1)
+
+    assert recognizer.tap_counts == [0, 1]
+    output = stream.getvalue()
+    assert output.index('"event": "runtime.home.level_confirmed"') < output.index(
+        '"event": "runtime.start_level.tap"'
+    )
+    assert '"confirmed_home_level": 1' in output
+    assert '"selected_candidate": "Level 1"' in output
+
+
+def test_invalid_home_level_prevents_start_tap(tmp_path: Path) -> None:
+    class StopAfterRetry(Exception):
+        pass
+
+    android = FakeAndroid()
+    recognizer = SequencedLevelNumberRecognizer(None, android=android)
+    runtime = _build(
+        android,
+        FakeClassifier(ScreenClassification(ScreenType.HOME_SCREEN, 0.99)),
+        tmp_path,
+        level_number_recognizer=recognizer,
+        sleeper=lambda _: (_ for _ in ()).throw(StopAfterRetry()),
+    )
+
+    with pytest.raises(StopAfterRetry):
+        runtime.start(max_levels=1)
+
+    assert android.taps == []
+
+
+def test_blank_gameplay_title_uses_cycle_confirmed_home_level(tmp_path: Path) -> None:
+    android = FakeAndroid()
+    recognizer = SequencedLevelNumberRecognizer(1, None, android=android)
+    stream = io.StringIO()
+    letter_recognizer = FakeLetterRecognizer()
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        level_number_recognizer=recognizer,
+        letter_recognizer=letter_recognizer,
+        logger=configure_logging(name="test.blank-title", stream=stream),
+    )
+
+    runtime.start(max_levels=1)
+
+    assert letter_recognizer.calls == 1
+    assert len(android.swipes) == 2
+    output = stream.getvalue()
+    assert '"event": "runtime.level.waiting_for_level_number"' in output
+    assert '"fallback_used": true' in output
+    assert '"event": "runtime.level.waiting_for_letters"' not in output
+
+
+def test_matching_gameplay_title_confirms_home_level(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    runtime = _build(
+        FakeAndroid(),
+        FakeClassifier(
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        level_number_recognizer=SequencedLevelNumberRecognizer(1, 1),
+        logger=configure_logging(name="test.match-title", stream=stream),
+    )
+
+    runtime.start(max_levels=1)
+
+    assert '"event": "runtime.level.level_number_confirmed"' in stream.getvalue()
+
+
+def test_conflicting_gameplay_title_retries_fresh_frame(tmp_path: Path) -> None:
+    android = FakeAndroid()
+    recognizer = SequencedLevelNumberRecognizer(1, 2, 1)
+    stream = io.StringIO()
+    wheel = FakeWheelDetector()
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        level_number_recognizer=recognizer,
+        wheel_detector=wheel,
+        logger=configure_logging(name="test.mismatch-title", stream=stream),
+    )
+
+    runtime.start(max_levels=1)
+
+    assert wheel.calls == 2
+    assert recognizer.calls == 3
+    assert '"event": "runtime.level.level_number_mismatch"' in stream.getvalue()
+    assert len(android.swipes) == 2
+
+
+def test_confirmed_level_is_cycle_scoped_without_incrementing(tmp_path: Path) -> None:
+    home = ScreenClassification(ScreenType.HOME_SCREEN, 0.99)
+    level = ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99)
+    recognizer = SequencedLevelNumberRecognizer(1, None, 2, None)
+    stream = io.StringIO()
+    runtime = _build(
+        FakeAndroid(),
+        FakeClassifier(home, level, home, home, level, home),
+        tmp_path,
+        level_number_recognizer=recognizer,
+        logger=configure_logging(name="test.scoped-level", stream=stream),
+    )
+
+    runtime.start(max_levels=2)
+
+    output = stream.getvalue()
+    assert output.count('"confirmed_home_level": 1') >= 1
+    assert output.count('"confirmed_home_level": 2') >= 1
+    assert '"cycle_id": "cycle-000001"' in output
+    assert '"cycle_id": "cycle-000002"' in output
+    assert runtime._cycle_state is not None
+    assert runtime._cycle_state.confirmed_home_level is None
+    assert recognizer.calls == 4
+
+
+def test_confirmed_level_still_requires_letter_cross_validation(tmp_path: Path) -> None:
+    android = FakeAndroid()
+    letters = WrongThenCorrectLetterRecognizer()
+    runtime = _build(
+        android,
+        FakeClassifier(
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
+        ),
+        tmp_path,
+        level_number_recognizer=SequencedLevelNumberRecognizer(1, None, None),
+        letter_recognizer=letters,
+    )
+
+    runtime.start(max_levels=1)
+
+    assert letters.calls == 2
+    assert len(android.swipes) == 2

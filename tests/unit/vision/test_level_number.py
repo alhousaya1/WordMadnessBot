@@ -4,7 +4,7 @@ import io
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from word_madness_bot.domain.errors import OcrError
 from word_madness_bot.domain.geometry import ScreenSize
@@ -77,3 +77,22 @@ def test_recognized_number_must_be_in_supported_database(tmp_path: Path) -> None
     with pytest.raises(OcrError, match="supported"):
         recognizer.recognize(capture)
     assert recognizer.last_candidates == ("90",)
+
+
+def test_home_crop_tracks_shifted_yellow_start_button(tmp_path: Path) -> None:
+    image = Image.new("RGB", (1440, 3120), (25, 30, 45))
+    ImageDraw.Draw(image).rounded_rectangle((263, 2072, 1175, 2271), radius=80, fill=(245, 190, 20))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    recognizer = LevelNumberRecognizer(debug_directory=tmp_path)
+
+    with pytest.raises(OcrError):
+        recognizer.recognize(ScreenCapture(output.getvalue(), ScreenSize(1440, 3120)))
+
+    assert recognizer.last_crop is not None
+    assert (
+        recognizer.last_crop.left,
+        recognizer.last_crop.top,
+        recognizer.last_crop.width,
+        recognizer.last_crop.height,
+    ) == (363, 2082, 721, 170)
