@@ -16,6 +16,7 @@ def test_settings_have_safe_defaults() -> None:
     assert settings.adb_retries == 2
     assert settings.swipe_segment_duration_seconds == 0.200
     assert settings.inter_word_safety_delay_seconds == 0.0
+    assert settings.first_word_readiness_delay_seconds == 0.500
     assert settings.log_level == "INFO"
     assert settings.data_directory == Path("data")
 
@@ -28,6 +29,7 @@ def test_settings_load_environment_overrides() -> None:
             "WMB_ADB_RETRIES": "5",
             "WMB_SWIPE_SEGMENT_DURATION_SECONDS": "0.175",
             "WMB_INTER_WORD_SAFETY_DELAY_SECONDS": "0.075",
+            "WMB_FIRST_WORD_READINESS_DELAY_SECONDS": "0.625",
             "WMB_LOG_LEVEL": "debug",
             "WMB_DATA_DIRECTORY": "resources/levels",
             "WMB_LOG_DIRECTORY": "var/log",
@@ -42,6 +44,7 @@ def test_settings_load_environment_overrides() -> None:
     assert settings.adb_retries == 5
     assert settings.swipe_segment_duration_seconds == 0.175
     assert settings.inter_word_safety_delay_seconds == 0.075
+    assert settings.first_word_readiness_delay_seconds == 0.625
     assert settings.log_level == "DEBUG"
     assert settings.template_directory == Path("resources/templates")
     assert settings.debug_directory == Path("var/debug")
@@ -57,6 +60,8 @@ def test_settings_load_environment_overrides() -> None:
         ({"WMB_SWIPE_SEGMENT_DURATION_SECONDS": "fast"}, "must be a number"),
         ({"WMB_SWIPE_SEGMENT_DURATION_SECONDS": "0"}, "greater than zero"),
         ({"WMB_INTER_WORD_SAFETY_DELAY_SECONDS": "0.101"}, "between zero"),
+        ({"WMB_FIRST_WORD_READINESS_DELAY_SECONDS": "soon"}, "must be a number"),
+        ({"WMB_FIRST_WORD_READINESS_DELAY_SECONDS": "-0.1"}, "cannot be negative"),
         ({"WMB_LOG_LEVEL": "verbose"}, "Unsupported log level"),
         ({"WMB_ADB_EXECUTABLE": "  "}, "cannot be empty"),
     ],

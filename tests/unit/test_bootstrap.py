@@ -303,7 +303,7 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     )
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(540, 1569)]
-    assert sleeps == [4.0, 1.0, 0.5]
+    assert sleeps == [4.0, 0.5, 1.0, 0.5]
     assert android.captures == 4
     assert classifier.calls == 3
     output = stream.getvalue()
@@ -367,7 +367,7 @@ def test_daily_dash_then_home_then_level_navigation(tmp_path: Path) -> None:
     runtime = _build(android, classifier, tmp_path, sleeper=sleeps.append)
     runtime.start(max_levels=1)
     assert android.taps == [PixelPoint(100, 40), PixelPoint(540, 1569)]
-    assert sleeps == [0.5, 4.0, 1.0, 0.5]
+    assert sleeps == [0.5, 4.0, 0.5, 1.0, 0.5]
     assert android.captures == 5
     assert classifier.calls == 4
 

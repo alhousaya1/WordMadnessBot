@@ -59,11 +59,14 @@ class LevelExecutor:
         logger: StructuredLogger | None = None,
         *,
         completion_animation_wait_seconds: float = 1.0,
+        first_word_readiness_delay_seconds: float = 0.500,
         recovery_poll_seconds: float = 0.5,
         recovery_timeout_seconds: float | None = None,
         clock: Clock = time.monotonic,
         sleeper: Sleeper = time.sleep,
     ) -> None:
+        if first_word_readiness_delay_seconds < 0:
+            raise ValueError("first_word_readiness_delay_seconds cannot be negative")
         if completion_animation_wait_seconds < 0:
             raise ValueError("completion_animation_wait_seconds cannot be negative")
         if recovery_poll_seconds <= 0:
@@ -77,6 +80,7 @@ class LevelExecutor:
         self.completion_overlay_detector = completion_overlay_detector
         self.logger = logger
         self.completion_animation_wait_seconds = completion_animation_wait_seconds
+        self.first_word_readiness_delay_seconds = first_word_readiness_delay_seconds
         self.recovery_poll_seconds = recovery_poll_seconds
         self.recovery_timeout_seconds = recovery_timeout_seconds
         self.clock = clock
@@ -87,10 +91,25 @@ class LevelExecutor:
         plan: LevelSolutionPlan,
         before: ScreenCapture,
         debug_directory: Path,
+        *,
+        pass_number: int = 1,
     ) -> LevelExecutionResult:
         """Execute and verify all solutions in order, stopping on the first failure."""
         if not plan.solutions:
             raise WordExecutionError("Level solution plan contains no words")
+        if pass_number <= 0:
+            raise ValueError("pass_number must be positive")
+
+        first_word = plan.solutions[0].word
+        if self.logger is not None:
+            self.logger.info(
+                "runtime.level.first_word_ready_wait",
+                delay_ms=round(self.first_word_readiness_delay_seconds * 1000),
+                level_number=plan.level,
+                pass_number=pass_number,
+                first_word=first_word,
+            )
+        self.sleeper(self.first_word_readiness_delay_seconds)
 
         results: list[WordExecutionResult] = []
         current = before

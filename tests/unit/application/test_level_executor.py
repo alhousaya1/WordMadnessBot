@@ -111,7 +111,7 @@ def test_executes_every_word_then_waits_until_home(tmp_path: Path) -> None:
     assert [word.word for word in result.words] == ["AB", "CAB"]
     assert result.home_capture is CAPTURE
     assert android.captures == 2
-    assert sleeps == [1.0, 0.5, 0.5]
+    assert sleeps == [0.5, 1.0, 0.5, 0.5]
 
 
 def test_next_swipe_starts_when_previous_backend_returns(tmp_path: Path) -> None:
@@ -195,7 +195,7 @@ def test_dismisses_reappearing_popup_until_it_is_gone(tmp_path: Path) -> None:
     executor.execute(_plan(), CAPTURE, tmp_path)
 
     assert android.taps == [PixelPoint(320, 40), PixelPoint(320, 40)]
-    assert sleeps == [1.0, 0.5, 0.5, 0.5]
+    assert sleeps == [0.5, 1.0, 0.5, 0.5, 0.5]
 
 
 class CompletionOverlayDetector:
@@ -253,7 +253,7 @@ def test_recovers_completion_overlays_in_priority_order(tmp_path: Path) -> None:
         PixelPoint(320, 40),
     ]
     assert android.captures == 4
-    assert sleeps == [1.0, 0.5, 0.5, 0.5, 0.5]
+    assert sleeps == [0.5, 1.0, 0.5, 0.5, 0.5, 0.5]
 
 
 def test_raises_when_completion_recovery_exceeds_twenty_seconds(
@@ -338,4 +338,59 @@ def test_settings_page_taps_back_once_then_returns_to_home(tmp_path: Path) -> No
 
     assert android.taps == [PixelPoint(20, 56)]
     assert android.captures == 2
-    assert sleeps == [1.0, 0.5, 0.5]
+    assert sleeps == [0.5, 1.0, 0.5, 0.5]
+
+
+def test_waits_exactly_once_immediately_before_first_word(tmp_path: Path) -> None:
+    events: list[tuple[str, object]] = []
+
+    class OrderedWordExecutor(WordExecutor):
+        def execute(
+            self,
+            plan: LevelSolutionPlan,
+            before: ScreenCapture,
+            debug_directory: Path,
+            *,
+            verify: bool = True,
+        ) -> WordExecutionResult:
+            events.append(("word", plan.solutions[0].word))
+            return super().execute(plan, before, debug_directory, verify=verify)
+
+    words = OrderedWordExecutor((True, True))
+    LevelExecutor(
+        Android(),  # type: ignore[arg-type]
+        words,  # type: ignore[arg-type]
+        Classifier(ScreenType.HOME_SCREEN),
+        completion_animation_wait_seconds=0,
+        recovery_poll_seconds=0.1,
+        sleeper=lambda seconds: events.append(("sleep", seconds)),
+    ).execute(_plan(), CAPTURE, tmp_path)
+
+    assert events[:3] == [("sleep", 0.5), ("word", "AB"), ("word", "CAB")]
+    assert words.words == ["AB", "CAB"]
+    assert words.durations == [250, 360]
+
+
+def test_replay_pass_waits_before_its_first_word_and_logs_pass_number(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    sleeps: list[float] = []
+    words = WordExecutor((True, True, True, True))
+    executor = LevelExecutor(
+        Android(),  # type: ignore[arg-type]
+        words,  # type: ignore[arg-type]
+        Classifier(ScreenType.HOME_SCREEN, ScreenType.HOME_SCREEN),
+        logger=configure_logging(name="test.first.word.replay", stream=stream),
+        sleeper=sleeps.append,
+    )
+
+    executor.execute(_plan(), CAPTURE, tmp_path, pass_number=1)
+    executor.execute(_plan(), CAPTURE, tmp_path, pass_number=2)
+
+    assert sleeps == [0.5, 1.0, 0.5, 0.5, 1.0, 0.5]
+    assert words.words == ["AB", "CAB", "AB", "CAB"]
+    output = stream.getvalue()
+    assert output.count('"event": "runtime.level.first_word_ready_wait"') == 2
+    assert '"delay_ms": 500' in output
+    assert '"level_number": 1' in output
+    assert '"pass_number": 2' in output
+    assert '"first_word": "AB"' in output
