@@ -82,6 +82,7 @@ class FakeWheelDetector:
     def detect(self, capture: ScreenCapture) -> LetterWheelGeometry:
         self.calls += 1
         if self.fail:
+            self.fail = False
             raise WheelGeometryDetectionError("wheel missing")
         return LetterWheelGeometry(
             center=PixelPoint(540, 1800),
@@ -90,6 +91,8 @@ class FakeWheelDetector:
                 LetterPosition(0, PixelPoint(540, 1550)),
                 LetterPosition(1, PixelPoint(760, 1900)),
                 LetterPosition(2, PixelPoint(320, 1900)),
+                LetterPosition(3, PixelPoint(400, 2050)),
+                LetterPosition(4, PixelPoint(680, 2050)),
             ),
         )
 
@@ -110,6 +113,7 @@ class FakeLetterRecognizer:
     ) -> WheelLetterRecognition:
         self.calls += 1
         if self.fail:
+            self.fail = False
             raise OcrError("letters missing")
         return WheelLetterRecognition(
             tuple(
@@ -120,7 +124,7 @@ class FakeLetterRecognizer:
                     elapsed_seconds=0.01,
                     crop_path=debug_directory / "letters" / f"letter-{position.index}.png",
                 )
-                for position, character in zip(geometry.letters, "ABC", strict=True)
+                for position, character in zip(geometry.letters, "ABCDE", strict=True)
             )
         )
 
@@ -257,8 +261,8 @@ def test_start_captures_classifies_and_logs_level_entry(tmp_path: Path) -> None:
     assert '"center_y": 1800' in output
     assert '"radius": 300' in output
     assert '"number_of_letters": 3' in output
-    assert (tmp_path / "letter-wheel-annotated.png").exists()
-    assert (tmp_path / "letter-wheel-geometry.json").exists()
+    assert (tmp_path / "cycle-000001" / "letter-wheel-annotated.png").exists()
+    assert (tmp_path / "cycle-000001" / "letter-wheel-geometry.json").exists()
 
 
 def test_starting_on_level_screen_continues_solving_without_home_button(
@@ -322,8 +326,8 @@ def test_home_start_is_tapped_then_level_is_verified(tmp_path: Path) -> None:
     assert '"center_y": 1800' in output
     assert '"radius": 300' in output
     assert '"number_of_letters": 3' in output
-    assert (tmp_path / "letter-wheel-annotated.png").exists()
-    assert (tmp_path / "letter-wheel-geometry.json").exists()
+    assert (tmp_path / "cycle-000001" / "letter-wheel-annotated.png").exists()
+    assert (tmp_path / "cycle-000001" / "letter-wheel-geometry.json").exists()
 
 
 def test_completion_home_start_waits_before_first_level_detection(tmp_path: Path) -> None:
@@ -402,40 +406,48 @@ def test_capture_failure_is_logged_and_raised(tmp_path: Path) -> None:
     assert '"event": "runtime.screenshot.failed"' in stream.getvalue()
 
 
-def test_wheel_detection_failure_logs_and_raises(tmp_path: Path) -> None:
+def test_wheel_detection_failure_retries_a_fresh_frame(tmp_path: Path) -> None:
     stream = io.StringIO()
+    detector = FakeWheelDetector(fail=True)
     runtime = _build(
         FakeAndroid(),
         FakeClassifier(
             ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
             ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
         ),
         tmp_path,
         logger=configure_logging(name="test.wheel.failure", stream=stream),
-        wheel_detector=FakeWheelDetector(fail=True),
+        wheel_detector=detector,
     )
-    with pytest.raises(WheelGeometryDetectionError, match="wheel missing"):
-        runtime.start(max_levels=1)
+    runtime.start(max_levels=1)
     output = stream.getvalue()
+    assert detector.calls == 2
     assert '"event": "runtime.wheel.detection_failed"' in output
-    assert '"error": "wheel missing"' in output
+    assert '"event": "runtime.level.waiting_for_letters"' in output
 
 
-def test_letter_recognition_failure_logs_and_raises(tmp_path: Path) -> None:
+def test_letter_recognition_failure_retries_without_stale_candidates(tmp_path: Path) -> None:
     stream = io.StringIO()
+    recognizer = FakeLetterRecognizer(fail=True)
     runtime = _build(
         FakeAndroid(),
         FakeClassifier(
             ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
             ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99),
+            ScreenClassification(ScreenType.HOME_SCREEN, 0.99),
         ),
         tmp_path,
         logger=configure_logging(name="test.letters.failure", stream=stream),
-        letter_recognizer=FakeLetterRecognizer(fail=True),
+        letter_recognizer=recognizer,
     )
-    with pytest.raises(OcrError, match="letters missing"):
-        runtime.start(max_levels=1)
+    runtime.start(max_levels=1)
+    assert recognizer.calls == 2
     assert '"event": "runtime.letters.recognition_failed"' in stream.getvalue()
+    assert runtime._cycle_state is not None
+    assert runtime._cycle_state.validation_candidates == ()
 
 
 def test_unknown_screens_are_saved_sequentially_with_detector_diagnostics(
@@ -490,7 +502,7 @@ def test_rejected_first_word_logs_and_stops(tmp_path: Path) -> None:
     with pytest.raises(WordNotAcceptedError, match="AB"):
         runtime.start(max_levels=1)
     assert len(android.swipes) == 3
-    assert (tmp_path / "swipe.json").exists()
+    assert (tmp_path / "cycle-000001" / "swipe.json").exists()
     assert '"event": "runtime.word.not_accepted"' in stream.getvalue()
 
 
@@ -548,8 +560,9 @@ def test_level_ocr_retries_with_fresh_screenshots(tmp_path: Path) -> None:
 
     assert recognizer.calls == 3
     assert sleeps[:2] == [0.5, 0.5]
-    assert (tmp_path / "level-ocr-retry-1.png").exists()
-    assert (tmp_path / "level-ocr-retry-2.png").exists()
+    cycle = tmp_path / "cycle-000001"
+    assert (cycle / "recognition-retry-0001.png").exists()
+    assert (cycle / "recognition-retry-0002.png").exists()
 
 
 def test_post_start_tap_to_continue_false_positive_does_not_tap(tmp_path: Path) -> None:
@@ -574,3 +587,109 @@ def test_post_start_tap_to_continue_false_positive_does_not_tap(tmp_path: Path) 
 
     assert android.taps == [PixelPoint(540, 1569)]
     assert sleeps[:2] == [4.0, 1.0]
+
+
+def test_reset_level_cycle_discards_all_previous_level_state(tmp_path: Path) -> None:
+    runtime = _build(FakeAndroid(), FakeClassifier(), tmp_path)
+    stale = runtime._reset_level_cycle()
+    stale.level_number = 99
+    stale.wheel_geometry = FakeWheelDetector().detect(ScreenCapture(PNG, ScreenSize(1080, 2400)))
+    stale.recognized_letters = FakeLetterRecognizer().recognize(
+        ScreenCapture(PNG, ScreenSize(1080, 2400)),
+        stale.wheel_geometry,
+        tmp_path,
+    )
+    stale.solution_plan = runtime.solution_planner.plan(
+        1,
+        stale.recognized_letters,
+        stale.wheel_geometry,
+        ScreenSize(1080, 2400),
+    )
+    stale.recognition_retry = 7
+    stale.replay_pass = 2
+    stale.previous_capture = ScreenCapture(PNG, ScreenSize(1080, 2400))
+    stale.previous_screen_confidence = 0.88
+    stale.validation_candidates = ("99",)
+    stale.completed = True
+
+    fresh = runtime._reset_level_cycle()
+
+    assert fresh.cycle_id == "cycle-000002"
+    assert fresh.level_number is None
+    assert fresh.wheel_geometry is None
+    assert fresh.recognized_letters is None
+    assert fresh.solution_plan is None
+    assert fresh.recognition_retry == 0
+    assert fresh.replay_pass == 0
+    assert fresh.previous_capture is None
+    assert fresh.previous_screen_confidence is None
+    assert fresh.validation_candidates == ()
+    assert not fresh.completed
+
+
+def test_home_animation_does_not_duplicate_start_level_tap(tmp_path: Path) -> None:
+    home = ScreenClassification(ScreenType.HOME_SCREEN, 0.99)
+    unknown = ScreenClassification(ScreenType.UNKNOWN, 0.2)
+    level = ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99)
+    android = FakeAndroid()
+    runtime = _build(
+        android,
+        FakeClassifier(home, home, unknown, level, home),
+        tmp_path,
+    )
+
+    runtime.start(max_levels=1)
+
+    assert android.taps == [PixelPoint(540, 1569)]
+
+
+def test_transition_retries_beyond_old_limit_without_terminating(tmp_path: Path) -> None:
+    home = ScreenClassification(ScreenType.HOME_SCREEN, 0.99)
+    unknown = ScreenClassification(ScreenType.UNKNOWN, 0.2)
+    level = ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99)
+    android = FakeAndroid()
+    sleeps: list[float] = []
+    runtime = _build(
+        android,
+        FakeClassifier(home, *(unknown for _ in range(25)), level, home),
+        tmp_path,
+        sleeper=sleeps.append,
+    )
+
+    runtime.start(max_levels=1)
+
+    assert android.taps == [PixelPoint(540, 1569)]
+    assert sleeps.count(1.0) >= 25
+    assert len(android.swipes) == 2
+
+
+def test_ten_sequential_levels_have_isolated_cycles_and_unchanged_timing(
+    tmp_path: Path,
+) -> None:
+    home = ScreenClassification(ScreenType.HOME_SCREEN, 0.99)
+    level = ScreenClassification(ScreenType.LEVEL_SCREEN, 0.99)
+    classifications = tuple(item for _ in range(10) for item in (home, level, home))
+    android = FakeAndroid()
+    sleeps: list[float] = []
+    stream = io.StringIO()
+    runtime = _build(
+        android,
+        FakeClassifier(*classifications),
+        tmp_path,
+        sleeper=sleeps.append,
+        logger=configure_logging(name="test.ten-cycles", stream=stream),
+    )
+
+    runtime.start(max_levels=10)
+
+    assert len(android.taps) == 10
+    assert len(android.swipes) == 20
+    assert all(path.duration_ms == (len(path.points) - 1) * 200 for path in android.swipes)
+    assert sleeps.count(0.1) == 10
+    assert runtime._cycle_sequence == 10
+    assert runtime._cycle_state is not None
+    assert runtime._cycle_state.cycle_id == "cycle-000010"
+    assert runtime._cycle_state.completed
+    output = stream.getvalue()
+    for number in range(1, 11):
+        assert f'"cycle_id": "cycle-{number:06d}"' in output

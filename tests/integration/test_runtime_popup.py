@@ -141,9 +141,10 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
     assert {path.duration_ms for path in android.swipes} == {400, 600, 800}
     assert (tmp_path / "screenshot-1.png").exists()
     assert (tmp_path / "screenshot-2.png").exists()
-    assert (tmp_path / "letter-wheel-annotated.png").exists()
-    assert (tmp_path / "letter-wheel-geometry.json").exists()
-    crops = sorted((tmp_path / "letters").glob("letter-*.png"))
+    cycle = tmp_path / "cycle-000001"
+    assert (cycle / "letter-wheel-annotated.png").exists()
+    assert (cycle / "letter-wheel-geometry.json").exists()
+    crops = sorted((cycle / "letters").glob("letter-*.png"))
     assert [path.name for path in crops] == [
         "letter-0.png",
         "letter-1.png",
@@ -151,9 +152,9 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
         "letter-3.png",
         "letter-4.png",
     ]
-    payload = json.loads((tmp_path / "letters.json").read_text(encoding="utf-8"))
+    payload = json.loads((cycle / "letters.json").read_text(encoding="utf-8"))
     assert "".join(item["character"] for item in payload["letters"]) == "OUNFD"
-    solution = json.loads((tmp_path / "level_solution.json").read_text(encoding="utf-8"))
+    solution = json.loads((cycle / "level_solution.json").read_text(encoding="utf-8"))
     assert solution["level"] == 90
     assert solution["recognized_letters"] == list("OUNFD")
     assert [item["word"] for item in solution["solutions"]] == [
@@ -166,11 +167,11 @@ def test_runtime_dismisses_popup_enters_level_and_saves_every_capture(
         "FUND",
         "FOUND",
     ]
-    swipe = json.loads((tmp_path / "swipe.json").read_text(encoding="utf-8"))
+    swipe = json.loads((cycle / "swipe.json").read_text(encoding="utf-8"))
     assert swipe["word"] == "FOUND"
     assert swipe["accepted"] is True
     assert swipe["duration_ms"] == 800
     assert swipe["timestamps_ms"] == [0, 800]
-    assert (tmp_path / "word_before.png").exists()
-    assert (tmp_path / "word_after.png").exists()
-    assert (tmp_path / "word_confirmed.png").exists()
+    assert (cycle / "word_before.png").exists()
+    assert (cycle / "word_after.png").exists()
+    assert (cycle / "word_confirmed.png").exists()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -78,13 +79,40 @@ Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
 COMPLETION_HOME_TRANSITION_TIMEOUT_SECONDS = 23.0
 LEVEL_ENTRY_STABILIZATION_SECONDS = 4.0
-LEVEL_WHEEL_READY_RETRY_LIMIT = 20
+RECENT_DEBUG_CYCLE_LIMIT = 10
 
 
 class RuntimeScreenClassifier(Protocol):
     """Narrow classification dependency used by the runtime."""
 
     def classify(self, capture: ScreenCapture) -> ScreenClassification: ...
+
+
+@dataclass(slots=True)
+class LevelCycleState:
+    """All recognition state whose lifetime is exactly one level attempt."""
+
+    cycle_id: str
+    level_number: int | None = None
+    wheel_geometry: LetterWheelGeometry | None = None
+    recognized_letters: WheelLetterRecognition | None = None
+    solution_plan: LevelSolutionPlan | None = None
+    recognition_retry: int = 0
+    replay_pass: int = 0
+    previous_capture: ScreenCapture | None = None
+    previous_screen_confidence: float | None = None
+    validation_candidates: tuple[str, ...] = ()
+    completed: bool = False
+
+    def clear_recognition_attempt(self) -> None:
+        """Discard every value derived from a failed or previous frame."""
+        self.level_number = None
+        self.wheel_geometry = None
+        self.recognized_letters = None
+        self.solution_plan = None
+        self.previous_capture = None
+        self.previous_screen_confidence = None
+        self.validation_candidates = ()
 
 
 @dataclass(slots=True)
@@ -110,6 +138,8 @@ class ApplicationRuntime:
     sleeper: Sleeper = field(default=time.sleep, repr=False)
     _started: bool = False
     _unknown_screenshot_number: int = 0
+    _cycle_sequence: int = 0
+    _cycle_state: LevelCycleState | None = None
 
     def start(self, *, dry_run: bool = False, max_levels: int | None = None) -> None:
         """Dispatch any current game screen until the requested levels are complete."""
@@ -132,7 +162,6 @@ class ApplicationRuntime:
         completed_levels = 0
         screenshot_number = 0
         awaiting_level = False
-        awaiting_level_attempts = 0
         completion_home_started: float | None = None
         completion_home_attempts = 0
 
@@ -145,19 +174,22 @@ class ApplicationRuntime:
             if dispatch.state is RuntimeScreenState.LEVEL:
                 completion_home_started = None
                 completion_home_attempts = 0
+                cycle = self._cycle_state or self._reset_level_cycle()
                 if awaiting_level and dispatch.classification is not None:
                     self.logger.info(
                         "runtime.level.entered",
+                        cycle_id=cycle.cycle_id,
                         template_confidence=dispatch.classification.confidence,
                     )
-                awaiting_level = False
-                awaiting_level_attempts = 0
-                recognized = self._recognize_level_with_retries(capture)
-                if recognized is None:
+                prepared = self._prepare_level_with_retries(capture, dispatcher, cycle)
+                if prepared is None:
+                    awaiting_level = False
                     continue
-                level_number, capture = recognized
-                self.logger.info("runtime.level.detected", detected_level=level_number)
-                self._solve_detected_level(capture, level_number)
+                awaiting_level = False
+                capture, plan = prepared
+                self.logger.info("runtime.level.solving_started", cycle_id=cycle.cycle_id)
+                self._execute_level(capture, plan, cycle_id=cycle.cycle_id)
+                cycle.completed = True
                 completed_levels += 1
                 continue
 
@@ -166,6 +198,13 @@ class ApplicationRuntime:
                 if completion_home_started is None:
                     completion_home_started = now
                     completion_home_attempts = 0
+                    cycle = self._reset_level_cycle()
+                    self.logger.info(
+                        "runtime.home.detected",
+                        cycle_id=cycle.cycle_id,
+                        confidence=None,
+                        completion_home=True,
+                    )
                 if now - completion_home_started >= COMPLETION_HOME_TRANSITION_TIMEOUT_SECONDS:
                     raise RuntimeNavigationError(
                         "Completion Home did not transition after tapping the Level button "
@@ -173,21 +212,21 @@ class ApplicationRuntime:
                     )
 
                 point = dispatch.action_point
-                should_tap = completion_home_attempts == 0 or (
-                    completion_home_attempts == 1 and dispatch.action_region is not None
-                )
+                should_tap = completion_home_attempts == 0
                 if should_tap:
                     if point is None:
                         raise RuntimeNavigationError(
                             "Completion Home dispatcher did not provide a Level tap"
                         )
-                    self._log_start_level(point, dispatch.action_region)
+                    self._log_start_level(
+                        point,
+                        dispatch.action_region,
+                        cycle_id=self._cycle_state.cycle_id if self._cycle_state else None,
+                    )
                     self.android.tap(point)
                     self.sleeper(LEVEL_ENTRY_STABILIZATION_SECONDS)
                 completion_home_attempts += 1
                 awaiting_level = should_tap or awaiting_level
-                if should_tap:
-                    awaiting_level_attempts = 0
                 if not should_tap:
                     self.sleeper(0.5)
                 continue
@@ -196,13 +235,28 @@ class ApplicationRuntime:
             completion_home_attempts = 0
 
             if dispatch.state is RuntimeScreenState.NORMAL_HOME:
+                if awaiting_level:
+                    self.logger.info(
+                        "runtime.level.transition_retry",
+                        cycle_id=self._cycle_state.cycle_id if self._cycle_state else None,
+                        reason="home_still_visible_after_start_tap",
+                    )
+                    self.sleeper(0.5)
+                    continue
+                cycle = self._reset_level_cycle()
+                self.logger.info(
+                    "runtime.home.detected",
+                    cycle_id=cycle.cycle_id,
+                    confidence=(
+                        dispatch.classification.confidence if dispatch.classification else None
+                    ),
+                )
                 point = dispatch.action_point
                 if point is None:
                     raise RuntimeNavigationError("Home dispatcher did not provide a Level tap")
-                self._log_start_level(point)
+                self._log_start_level(point, cycle_id=cycle.cycle_id)
                 self.android.tap(point)
                 awaiting_level = True
-                awaiting_level_attempts = 0
                 self.sleeper(LEVEL_ENTRY_STABILIZATION_SECONDS)
                 continue
 
@@ -210,23 +264,18 @@ class ApplicationRuntime:
                 RuntimeScreenState.UNKNOWN,
                 RuntimeScreenState.TAP_TO_CONTINUE,
             }:
-                awaiting_level_attempts += 1
+                cycle = self._cycle_state or self._reset_level_cycle()
+                cycle.recognition_retry += 1
                 self.logger.info(
                     "runtime.level.waiting_for_wheel",
-                    attempt=awaiting_level_attempts,
-                    maximum_attempts=LEVEL_WHEEL_READY_RETRY_LIMIT,
+                    cycle_id=cycle.cycle_id,
+                    attempt=cycle.recognition_retry,
                     detected_screen=(
                         dispatch.classification.screen.value
                         if dispatch.classification is not None
                         else dispatch.state.value
                     ),
                 )
-                if awaiting_level_attempts >= LEVEL_WHEEL_READY_RETRY_LIMIT:
-                    self.logger.warning(
-                        "runtime.level.wheel_wait_timeout",
-                        attempts=awaiting_level_attempts,
-                    )
-                    awaiting_level = False
                 self.sleeper(1.0)
                 continue
 
@@ -239,6 +288,105 @@ class ApplicationRuntime:
 
         self._started = True
         self.logger.info("runtime.started", dry_run=False)
+
+    def _reset_level_cycle(self) -> LevelCycleState:
+        self._cycle_sequence += 1
+        state = LevelCycleState(f"cycle-{self._cycle_sequence:06d}")
+        self._cycle_state = state
+        self._prune_debug_cycles()
+        return state
+
+    def _prune_debug_cycles(self) -> None:
+        root = self.settings.debug_directory
+        if not root.exists():
+            return
+        cycles = sorted(
+            path for path in root.glob("cycle-[0-9][0-9][0-9][0-9][0-9][0-9]") if path.is_dir()
+        )
+        for expired in cycles[:-RECENT_DEBUG_CYCLE_LIMIT]:
+            shutil.rmtree(expired)
+
+    def _prepare_level_with_retries(
+        self,
+        capture: ScreenCapture,
+        dispatcher: RuntimeScreenDispatcher,
+        cycle: LevelCycleState,
+    ) -> tuple[ScreenCapture, LevelSolutionPlan] | None:
+        """Build a plan only from one fresh, positively playable frame."""
+        while True:
+            cycle.clear_recognition_attempt()
+            cycle.previous_capture = capture
+            try:
+                geometry = self._detect_wheel_geometry(capture, cycle_id=cycle.cycle_id)
+                if len(geometry.letters) not in {5, 6, 7}:
+                    raise WheelGeometryDetectionError(
+                        f"Expected 5, 6, or 7 wheel letters; detected {len(geometry.letters)}"
+                    )
+                cycle.wheel_geometry = geometry
+                self.logger.info(
+                    "runtime.level.screen_detected",
+                    cycle_id=cycle.cycle_id,
+                    wheel_visible=True,
+                    number_of_letters=len(geometry.letters),
+                )
+                number = self.level_number_recognizer.recognize(capture)
+                self.levels.get_level(number)
+                cycle.level_number = number
+                cycle.validation_candidates = tuple(
+                    getattr(self.level_number_recognizer, "last_candidates", ())
+                )
+                self.logger.info(
+                    "runtime.level.detected",
+                    cycle_id=cycle.cycle_id,
+                    detected_level=number,
+                )
+                recognition = self._recognize_letters(capture, geometry, cycle_id=cycle.cycle_id)
+                cycle.recognized_letters = recognition
+                plan = self._plan_level_solution(
+                    capture,
+                    geometry,
+                    recognition,
+                    level_number=number,
+                    cycle_id=cycle.cycle_id,
+                )
+                cycle.solution_plan = plan
+                return capture, plan
+            except (
+                WheelGeometryDetectionError,
+                OcrError,
+                LevelNotFoundError,
+                WordMadnessError,
+            ) as error:
+                cycle.recognition_retry += 1
+                self.logger.warning(
+                    "runtime.level.waiting_for_letters",
+                    cycle_id=cycle.cycle_id,
+                    attempt=cycle.recognition_retry,
+                    error=str(error),
+                )
+                self.logger.info(
+                    "runtime.level.recovery_retry",
+                    cycle_id=cycle.cycle_id,
+                    attempt=cycle.recognition_retry,
+                )
+                self.sleeper(0.5)
+                capture = self._capture_debug_screenshot(
+                    f"{cycle.cycle_id}/recognition-retry-{cycle.recognition_retry:04d}.png"
+                )
+                dispatch = dispatcher.dispatch(capture)
+                if dispatch.state is RuntimeScreenState.LEVEL:
+                    continue
+                if dispatch.state in {
+                    RuntimeScreenState.UNKNOWN,
+                    RuntimeScreenState.TAP_TO_CONTINUE,
+                }:
+                    continue
+                self.logger.info(
+                    "runtime.level.recovery_screen_changed",
+                    cycle_id=cycle.cycle_id,
+                    detected_state=dispatch.state.value,
+                )
+                return None
 
     def _recognize_level_with_retries(
         self, capture: ScreenCapture, *, attempts: int = 3
@@ -278,9 +426,16 @@ class ApplicationRuntime:
                 return number, capture
         return None
 
-    def _log_start_level(self, point: PixelPoint, region: PixelRect | None = None) -> None:
+    def _log_start_level(
+        self,
+        point: PixelPoint,
+        region: PixelRect | None = None,
+        *,
+        cycle_id: str | None = None,
+    ) -> None:
         self.logger.info(
             "runtime.start_level.detected",
+            cycle_id=cycle_id,
             button_left=region.left if region is not None else point.x,
             button_top=region.top if region is not None else point.y,
             button_width=region.width if region is not None else 0,
@@ -289,7 +444,7 @@ class ApplicationRuntime:
             ocr_crop_height=0,
             template_confidence=None,
         )
-        self.logger.info("runtime.start_level.tap", tap_x=point.x, tap_y=point.y)
+        self.logger.info("runtime.start_level.tap", cycle_id=cycle_id, tap_x=point.x, tap_y=point.y)
 
     def _solve_detected_level(
         self,
@@ -335,12 +490,19 @@ class ApplicationRuntime:
             f"Unable to enter level: {reason} (detected {classification.screen.value})"
         )
 
-    def _detect_wheel_geometry(self, capture: ScreenCapture) -> LetterWheelGeometry:
+    def _detect_wheel_geometry(
+        self, capture: ScreenCapture, *, cycle_id: str | None = None
+    ) -> LetterWheelGeometry:
         started = self.clock()
+        debug_directory = (
+            self.settings.debug_directory / cycle_id
+            if cycle_id is not None
+            else self.settings.debug_directory
+        )
         try:
             geometry = self.wheel_detector.detect(capture)
             annotated_path, json_path = save_wheel_debug_artifacts(
-                self.settings.debug_directory,
+                debug_directory,
                 capture,
                 geometry,
                 self.wheel_detector,
@@ -354,6 +516,7 @@ class ApplicationRuntime:
             raise
         self.logger.info(
             "runtime.wheel.detected",
+            cycle_id=cycle_id,
             detection_duration_seconds=self.clock() - started,
             center_x=geometry.center.x,
             center_y=geometry.center.y,
@@ -368,12 +531,19 @@ class ApplicationRuntime:
         self,
         capture: ScreenCapture,
         geometry: LetterWheelGeometry,
+        *,
+        cycle_id: str | None = None,
     ) -> WheelLetterRecognition:
+        debug_directory = (
+            self.settings.debug_directory / cycle_id
+            if cycle_id is not None
+            else self.settings.debug_directory
+        )
         try:
             recognition = self.letter_recognizer.recognize(
                 capture,
                 geometry,
-                self.settings.debug_directory,
+                debug_directory,
             )
         except OcrError as error:
             self.logger.exception(
@@ -384,6 +554,7 @@ class ApplicationRuntime:
         for letter in recognition.letters:
             self.logger.info(
                 "runtime.letter.recognized",
+                cycle_id=cycle_id,
                 index=letter.index,
                 detected_character=letter.character,
                 confidence=letter.confidence,
@@ -393,7 +564,7 @@ class ApplicationRuntime:
         self.logger.info(
             "runtime.letters.recognized",
             number_of_letters=len(recognition.letters),
-            output_filename=str(self.settings.debug_directory / "letters.json"),
+            output_filename=str(debug_directory / "letters.json"),
         )
         return recognition
 
@@ -404,11 +575,15 @@ class ApplicationRuntime:
         recognition: WheelLetterRecognition,
         *,
         level_number: int,
+        cycle_id: str | None = None,
     ) -> LevelSolutionPlan:
         started = self.clock()
+        debug_directory = (
+            self.settings.debug_directory / cycle_id if cycle_id else self.settings.debug_directory
+        )
         try:
             plan = self.solution_planner.plan(level_number, recognition, geometry, capture.size)
-            output_path = save_level_solution(plan, self.settings.debug_directory)
+            output_path = save_level_solution(plan, debug_directory)
         except WordMadnessError as error:
             self.logger.exception(
                 "runtime.solution.planning_failed",
@@ -418,6 +593,7 @@ class ApplicationRuntime:
             raise
         self.logger.info(
             "runtime.solution.planned",
+            cycle_id=cycle_id,
             detected_level=plan.level,
             recognized_letters=list(plan.recognized_letters),
             number_of_solution_words=len(plan.solutions),
@@ -430,9 +606,16 @@ class ApplicationRuntime:
         self,
         before: ScreenCapture,
         plan: LevelSolutionPlan,
+        *,
+        cycle_id: str | None = None,
     ) -> ScreenCapture:
+        debug_directory = (
+            self.settings.debug_directory / cycle_id
+            if cycle_id is not None
+            else self.settings.debug_directory
+        )
         try:
-            result = self.level_executor.execute(plan, before, self.settings.debug_directory)
+            result = self.level_executor.execute(plan, before, debug_directory)
         except WordNotAcceptedError as error:
             self.logger.error(
                 "runtime.word.not_accepted",
@@ -464,6 +647,7 @@ class ApplicationRuntime:
             )
         self.logger.info(
             "runtime.level.completed",
+            cycle_id=cycle_id,
             detected_level=plan.level,
             number_of_solution_words=len(result.words),
         )
@@ -476,6 +660,9 @@ class ApplicationRuntime:
             "runtime.screen.detected",
             detected_screen=result.screen.value,
             template_confidence=result.confidence,
+            home_template_confidence=result.home_template_confidence,
+            start_button_confidence=result.start_button_confidence,
+            combined_confidence=result.confidence,
             level_template_confidence=result.level_template_confidence,
             level_template_matched=result.level_template_matched,
             wheel_check_passed=result.wheel_visible,

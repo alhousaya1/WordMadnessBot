@@ -36,6 +36,7 @@ class ScreenClassification:
     close_button: PixelRect | None = None
     start_button: PixelRect | None = None
     start_button_confidence: float | None = None
+    home_template_confidence: float | None = None
     level_template_confidence: float | None = None
     level_template_matched: bool | None = None
     wheel_visible: bool | None = None
@@ -86,6 +87,7 @@ class ScreenClassifier:
             return ScreenClassification(
                 ScreenType.LEVEL_SCREEN,
                 1.0,
+                home_template_confidence=home_confidence,
                 level_template_confidence=level_confidence,
                 level_template_matched=level_confidence >= self.minimum_confidence,
                 wheel_visible=True,
@@ -106,6 +108,7 @@ class ScreenClassifier:
                     1.0,
                     start_button=completion_button,
                     start_button_confidence=1.0,
+                    home_template_confidence=home_confidence,
                     level_template_confidence=level_confidence,
                     level_template_matched=False,
                     wheel_visible=wheel_visible,
@@ -114,6 +117,7 @@ class ScreenClassifier:
             return ScreenClassification(
                 ScreenType.UNKNOWN,
                 confidence,
+                home_template_confidence=home_confidence,
                 level_template_confidence=level_confidence,
                 level_template_matched=False,
                 wheel_visible=wheel_visible,
@@ -137,6 +141,7 @@ class ScreenClassifier:
             close_button,
             start_button,
             start_button_confidence,
+            home_template_confidence=home_confidence,
             level_template_confidence=level_confidence,
             level_template_matched=level_confidence >= self.minimum_confidence,
             wheel_visible=wheel_visible,
