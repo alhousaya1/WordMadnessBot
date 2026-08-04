@@ -355,7 +355,12 @@ class ApplicationRuntime:
 
     def _confirm_home_level(self, capture: ScreenCapture, cycle: LevelCycleState) -> bool:
         try:
-            number = self.level_number_recognizer.recognize(capture)
+            recognize_home = getattr(
+                self.level_number_recognizer,
+                "recognize_home",
+                self.level_number_recognizer.recognize,
+            )
+            number = recognize_home(capture)
             self.levels.get_level(number)
         except (OcrError, LevelNotFoundError) as error:
             candidates = tuple(getattr(self.level_number_recognizer, "last_candidates", ()))
@@ -455,29 +460,61 @@ class ApplicationRuntime:
                     cycle.confirmed_home_level is not None
                     and title_number != cycle.confirmed_home_level
                 ):
-                    self.logger.warning(
-                        "runtime.level.level_number_mismatch",
-                        cycle_id=cycle.cycle_id,
-                        confirmed_home_level=cycle.confirmed_home_level,
-                        gameplay_title_level=title_number,
-                        raw_candidates=list(title_candidates),
+                    confirmed_text = str(cycle.confirmed_home_level)
+                    title_text = str(title_number)
+                    title_is_partial = (
+                        len(title_text) < len(confirmed_text)
+                        and title_text in confirmed_text
                     )
-                    retry_capture = self._retry_level_recognition(
-                        dispatcher,
-                        cycle,
-                        event="runtime.level.waiting_for_level_number",
-                        error=OcrError("Gameplay title does not match confirmed home level"),
-                    )
-                    if retry_capture is None:
-                        return None
-                    capture = retry_capture
-                    continue
-                number = title_number
+
+                    if title_is_partial:
+                        self.logger.warning(
+                            "runtime.level.level_number_mismatch",
+                            cycle_id=cycle.cycle_id,
+                            confirmed_home_level=cycle.confirmed_home_level,
+                            gameplay_title_level=title_number,
+                            raw_candidates=list(title_candidates),
+                            gameplay_candidate_is_partial=True,
+                            selected_level=cycle.confirmed_home_level,
+                            selection_reason=(
+                                "confirmed_home_level_preserved_over_partial_gameplay_ocr"
+                            ),
+                        )
+                        number = cycle.confirmed_home_level
+                    else:
+                        self.logger.warning(
+                            "runtime.level.level_number_mismatch",
+                            cycle_id=cycle.cycle_id,
+                            confirmed_home_level=cycle.confirmed_home_level,
+                            gameplay_title_level=title_number,
+                            raw_candidates=list(title_candidates),
+                            gameplay_candidate_is_partial=False,
+                            selected_level=None,
+                            selection_reason=(
+                                "complete_conflicting_gameplay_level_requires_fresh_retry"
+                            ),
+                        )
+                        retry_capture = self._retry_level_recognition(
+                            dispatcher,
+                            cycle,
+                            event="runtime.level.waiting_for_level_number",
+                            error=OcrError(
+                                "Gameplay title does not match confirmed home level"
+                            ),
+                        )
+                        if retry_capture is None:
+                            return None
+                        capture = retry_capture
+                        continue
+                else:
+                    number = title_number
+
                 self.logger.info(
                     "runtime.level.level_number_confirmed",
                     cycle_id=cycle.cycle_id,
                     confirmed_home_level=cycle.confirmed_home_level,
                     gameplay_title_level=title_number,
+                    selected_level=number,
                     raw_candidates=list(title_candidates),
                 )
 

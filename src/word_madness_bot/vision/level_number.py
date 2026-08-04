@@ -1,4 +1,4 @@
-"""Resolution-independent recognition of level numbers shown by the game."""
+﻿"""Resolution-independent recognition of level numbers shown by the game."""
 
 from __future__ import annotations
 
@@ -66,6 +66,62 @@ def parse_level_number(text: str) -> int | None:
     return number if number > 0 else None
 
 
+def _candidate_digits(text: str) -> str | None:
+    """Return the complete detected digit sequence for one OCR candidate."""
+    match = _LEVEL_PATTERN.fullmatch(text.strip())
+    if match is None:
+        return None
+    digits = match.group(1)
+    return digits if digits and int(digits) > 0 else None
+
+
+def _select_best_level_candidate(
+    candidates: list[str],
+    supported_levels: frozenset[int] | None,
+) -> int | None:
+    """Select a complete supported level and reject shorter OCR fragments.
+
+    A candidate such as ``4`` is considered a likely fragment when the same
+    recognition pass also produced a supported candidate such as ``418``.
+    The function does not invent, increment, or otherwise guess a level.
+    """
+    parsed: list[tuple[str, int, int]] = []
+
+    for candidate in candidates:
+        digits = _candidate_digits(candidate)
+        if digits is None:
+            continue
+
+        number = int(digits)
+        if supported_levels is not None and number not in supported_levels:
+            continue
+
+        parsed.append((digits, number, candidates.count(candidate)))
+
+    if not parsed:
+        return None
+
+    def score(item: tuple[str, int, int]) -> tuple[int, int, int]:
+        digits, _number, occurrences = item
+
+        fragment_of_longer = any(
+            digits != other_digits
+            and len(other_digits) > len(digits)
+            and digits in other_digits
+            for other_digits, _other_number, _other_occurrences in parsed
+        )
+
+        complete_over_fragment = 0 if fragment_of_longer else 1
+
+        return (
+            complete_over_fragment,
+            occurrences,
+            len(digits),
+        )
+
+    return max(parsed, key=score)[1]
+
+
 class LevelNumberRecognizer:
     """Recognize a supported level using templates and optional Tesseract."""
 
@@ -91,6 +147,14 @@ class LevelNumberRecognizer:
         self.last_candidates: tuple[str, ...] = ()
         self.last_crop: PixelRect | None = None
 
+    def recognize_home(self, capture: ScreenCapture) -> int:
+        """Recognize the level specifically from a confirmed home screen."""
+        self._prefer_home_crop = True
+        try:
+            return self.recognize(capture)
+        finally:
+            self._prefer_home_crop = False
+
     def recognize(self, capture: ScreenCapture) -> int:
         """Return a database-supported level number without guessing."""
         try:
@@ -98,6 +162,8 @@ class LevelNumberRecognizer:
         except (OSError, ValueError) as error:
             raise OcrError("Unable to decode screenshot for level recognition") from error
         button = _yellow_level_button(source)
+        prefer_home_crop = bool(getattr(self, "_prefer_home_crop", False))
+
         if button is not None:
             crop_rect = PixelRect(
                 button.left + round(button.width * 0.11),
@@ -105,8 +171,16 @@ class LevelNumberRecognizer:
                 max(1, round(button.width * 0.79)),
                 max(1, round(button.height * 0.85)),
             )
+        elif prefer_home_crop:
+            crop_rect = scale_reference_rect(
+                HOME_LEVEL_TEXT_REFERENCE,
+                capture.size,
+            )
         else:
-            crop_rect = scale_reference_rect(LEVEL_TITLE_REFERENCE, capture.size)
+            crop_rect = scale_reference_rect(
+                LEVEL_TITLE_REFERENCE,
+                capture.size,
+            )
         self.last_crop = crop_rect
         crop = source.crop(
             (
@@ -125,13 +199,16 @@ class LevelNumberRecognizer:
             if template is not None:
                 candidates.append(template)
         candidates.extend(_recognize_with_tesseract(variants))
+
         self.last_candidates = tuple(dict.fromkeys(candidates))
-        for candidate in self.last_candidates:
-            number = parse_level_number(candidate)
-            if number is not None and (
-                self.supported_levels is None or number in self.supported_levels
-            ):
-                return number
+
+        selected = _select_best_level_candidate(
+            candidates,
+            self.supported_levels,
+        )
+        if selected is not None:
+            return selected
+
         if not self.last_candidates:
             raise OcrError("No level-number OCR candidates were returned")
         raise OcrError("Home level OCR did not return a supported 'Level <integer>'")
@@ -195,49 +272,122 @@ class LevelNumberRecognizer:
 
 
 def _preprocess(crop: Image.Image) -> dict[str, Image.Image]:
-    scale = max(2, round(900 / max(1, crop.width)))
-    upscaled = crop.resize((crop.width * scale, crop.height * scale), Image.Resampling.LANCZOS)
+    """Create multiple OCR views while preserving the UI font."""
+    scale = max(2, round(1200 / max(1, crop.width)))
+    upscaled = crop.resize(
+        (crop.width * scale, crop.height * scale),
+        Image.Resampling.LANCZOS,
+    )
+
     gray = upscaled.convert("L")
-    array = np.asarray(gray, dtype=np.uint8)
-    _, threshold = cv2.threshold(array, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    gray_array = np.asarray(gray, dtype=np.uint8)
+
+    clahe = cv2.createCLAHE(
+        clipLimit=2.5,
+        tileGridSize=(8, 8),
+    ).apply(gray_array)
+
+    blurred = cv2.GaussianBlur(clahe, (0, 0), 1.1)
+    sharpened = cv2.addWeighted(clahe, 1.8, blurred, -0.8, 0)
+
+    _, threshold = cv2.threshold(
+        sharpened,
+        0,
+        255,
+        cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+    )
+
+    adaptive = cv2.adaptiveThreshold(
+        sharpened,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        41,
+        9,
+    )
+
     return {
+        "original": upscaled,
         "upscaled": upscaled,
         "gray": gray,
+        "clahe": Image.fromarray(clahe),
+        "sharpened": Image.fromarray(sharpened),
         "threshold": Image.fromarray(threshold),
         "inverted": Image.fromarray(cv2.bitwise_not(threshold)),
+        "adaptive": Image.fromarray(adaptive),
+        "adaptive_inverted": Image.fromarray(
+            cv2.bitwise_not(adaptive)
+        ),
     }
 
 
-def _recognize_with_tesseract(variants: dict[str, Image.Image]) -> list[str]:
+def _recognize_with_tesseract(
+    variants: dict[str, Image.Image],
+) -> list[str]:
     executable = shutil.which("tesseract")
     if executable is None:
         return []
+
     candidates: list[str] = []
-    for name in ("gray", "threshold", "inverted"):
+
+    for name in (
+        "original",
+        "gray",
+        "clahe",
+        "sharpened",
+        "threshold",
+        "inverted",
+        "adaptive",
+        "adaptive_inverted",
+    ):
+        image = variants.get(name)
+        if image is None:
+            continue
+
         encoded = io.BytesIO()
-        variants[name].save(encoded, format="PNG")
-        for whitelist in ("LevelLEVEL 0123456789", "0123456789"):
-            try:
-                result = subprocess.run(
-                    [
-                        executable,
-                        "stdin",
-                        "stdout",
-                        "--psm",
-                        "7",
-                        "-c",
-                        f"tessedit_char_whitelist={whitelist}",
-                    ],
-                    input=encoded.getvalue(),
-                    capture_output=True,
-                    check=False,
-                    timeout=5.0,
-                )
-            except (OSError, subprocess.SubprocessError):
-                continue
-            text = result.stdout.decode("utf-8", errors="replace").strip()
-            if result.returncode == 0 and text:
-                candidates.append(text)
+        image.save(encoded, format="PNG")
+        image_bytes = encoded.getvalue()
+
+        for page_mode in ("6", "7", "11", "13"):
+            for whitelist in (
+                "LevelLEVEL 0123456789",
+                "0123456789",
+            ):
+                try:
+                    result = subprocess.run(
+                        [
+                            executable,
+                            "stdin",
+                            "stdout",
+                            "--psm",
+                            page_mode,
+                            "-c",
+                            f"tessedit_char_whitelist={whitelist}",
+                        ],
+                        input=image_bytes,
+                        capture_output=True,
+                        check=False,
+                        timeout=5.0,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    continue
+
+                if result.returncode != 0:
+                    continue
+
+                raw_text = result.stdout.decode(
+                    "utf-8",
+                    errors="replace",
+                ).strip()
+
+                if not raw_text:
+                    continue
+
+                candidates.append(raw_text)
+
+                for digits in re.findall(r"[0-9]+", raw_text):
+                    candidates.append(digits)
+
     return candidates
 
 
@@ -305,3 +455,4 @@ def _normalize_array(mask: Any) -> Any:
     x = (64 - resized.shape[1]) // 2
     normalized[y : y + resized.shape[0], x : x + resized.shape[1]] = resized
     return normalized
+

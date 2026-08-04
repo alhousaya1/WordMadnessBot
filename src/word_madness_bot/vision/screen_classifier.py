@@ -84,6 +84,45 @@ class ScreenClassifier:
             wheel_visible = False
             wheel_detection_error = str(error)
         else:
+            wheel_visible = True
+            wheel_detection_error = None
+
+            # A false circle on a bright or animated home frame must not
+            # override strong home-screen evidence. The previous code
+            # returned LEVEL_SCREEN immediately whenever any wheel-like
+            # circle was detected.
+            if (
+                home_confidence >= self.minimum_confidence
+                and level_confidence < self.minimum_confidence
+            ):
+                completion_button = _find_yellow_level_button(
+                    _decode_png_color(capture.data)
+                )
+                if completion_button is None:
+                    height, width = source.shape[:2]
+                    completion_button = PixelRect(
+                        round(width * 263 / 1440),
+                        round(height * 2072 / 3120),
+                        max(1, round(width * 913 / 1440)),
+                        max(1, round(height * 200 / 3120)),
+                    )
+                return ScreenClassification(
+                    ScreenType.HOME_SCREEN,
+                    home_confidence,
+                    start_button=completion_button,
+                    start_button_confidence=(
+                        1.0 if completion_button is not None else None
+                    ),
+                    home_template_confidence=home_confidence,
+                    level_template_confidence=level_confidence,
+                    level_template_matched=False,
+                    wheel_visible=True,
+                    wheel_detection_error=(
+                        "Wheel-like geometry rejected because strong home "
+                        "template evidence conflicts with weak level evidence"
+                    ),
+                )
+
             return ScreenClassification(
                 ScreenType.LEVEL_SCREEN,
                 1.0,
