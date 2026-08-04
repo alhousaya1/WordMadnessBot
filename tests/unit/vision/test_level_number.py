@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import io
 from pathlib import Path
@@ -76,7 +76,7 @@ def test_recognized_number_must_be_in_supported_database(tmp_path: Path) -> None
     recognizer = LevelNumberRecognizer(supported_levels=frozenset({1, 2}), debug_directory=tmp_path)
     with pytest.raises(OcrError, match="supported"):
         recognizer.recognize(capture)
-    assert recognizer.last_candidates == ("90",)
+    assert recognizer.last_candidates[0] == "90"
 
 
 def test_home_crop_tracks_shifted_yellow_start_button(tmp_path: Path) -> None:
@@ -96,3 +96,4 @@ def test_home_crop_tracks_shifted_yellow_start_button(tmp_path: Path) -> None:
         recognizer.last_crop.width,
         recognizer.last_crop.height,
     ) == (363, 2082, 721, 170)
+

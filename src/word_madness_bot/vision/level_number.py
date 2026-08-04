@@ -79,11 +79,10 @@ def _select_best_level_candidate(
     candidates: list[str],
     supported_levels: frozenset[int] | None,
 ) -> int | None:
-    """Select a complete supported level and reject shorter OCR fragments.
+    """Select the strongest complete OCR candidate without guessing.
 
-    A candidate such as ``4`` is considered a likely fragment when the same
-    recognition pass also produced a supported candidate such as ``418``.
-    The function does not invent, increment, or otherwise guess a level.
+    Selection is performed before database validation so that a short,
+    supported noise fragment cannot beat a longer, complete OCR result.
     """
     parsed: list[tuple[str, int, int]] = []
 
@@ -92,11 +91,7 @@ def _select_best_level_candidate(
         if digits is None:
             continue
 
-        number = int(digits)
-        if supported_levels is not None and number not in supported_levels:
-            continue
-
-        parsed.append((digits, number, candidates.count(candidate)))
+        parsed.append((digits, int(digits), candidates.count(candidate)))
 
     if not parsed:
         return None
@@ -111,15 +106,18 @@ def _select_best_level_candidate(
             for other_digits, _other_number, _other_occurrences in parsed
         )
 
-        complete_over_fragment = 0 if fragment_of_longer else 1
-
         return (
-            complete_over_fragment,
+            0 if fragment_of_longer else 1,
             occurrences,
             len(digits),
         )
 
-    return max(parsed, key=score)[1]
+    selected = max(parsed, key=score)[1]
+
+    if supported_levels is not None and selected not in supported_levels:
+        return None
+
+    return selected
 
 
 class LevelNumberRecognizer:
@@ -200,7 +198,16 @@ class LevelNumberRecognizer:
                 candidates.append(template)
         candidates.extend(_recognize_with_tesseract(variants))
 
-        self.last_candidates = tuple(dict.fromkeys(candidates))
+        # Preserve only complete, strictly parseable level candidates in
+        # diagnostics. Raw multiline Tesseract output remains available during
+        # selection but should not appear in last_candidates.
+        self.last_candidates = tuple(
+            dict.fromkeys(
+                candidate.strip()
+                for candidate in candidates
+                if _candidate_digits(candidate) is not None
+            )
+        )
 
         selected = _select_best_level_candidate(
             candidates,
@@ -209,9 +216,12 @@ class LevelNumberRecognizer:
         if selected is not None:
             return selected
 
-        if not self.last_candidates:
-            raise OcrError("No level-number OCR candidates were returned")
-        raise OcrError("Home level OCR did not return a supported 'Level <integer>'")
+        if self.supported_levels is not None and self.last_candidates:
+            raise OcrError(
+                "No level-number OCR candidate matched a supported level"
+            )
+
+        raise OcrError("No level-number OCR candidates were returned")
 
     def _recognize_template(self, binary: Any) -> str | None:
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
